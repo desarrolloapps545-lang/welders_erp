@@ -274,9 +274,16 @@
 
         <section id="historyView" class="view">
           <div class="panel">
-            <div class="history-tabs">
-              <button class="history-tab active" data-history="general">General</button>
-              <button class="history-tab" data-history="personal">Mi historial</button>
+            <div class="history-toolbar">
+              <div class="history-tabs">
+                <button class="history-tab active" data-history="general">General</button>
+                <button class="history-tab" data-history="personal">Mi historial</button>
+              </div>
+              <select id="historyFilter" class="history-filter-select">
+                <option value="all">Todo</option>
+                <option value="inventory">Solo inventario</option>
+                <option value="invoice">Solo facturación</option>
+              </select>
             </div>
             <div id="historyGeneral" class="history-table active-history">
               <table>

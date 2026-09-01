@@ -8,6 +8,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABAS
 const state = {
   activeView: 'dashboard',
   currentUser: null,
+  currentUserProfile: null,
 };
 
 const authView = document.getElementById('authView');
@@ -141,6 +142,26 @@ function setPageTitle(viewName) {
   pageTitle.textContent = map[viewName] || 'Dashboard';
 }
 
+function isAdminRole(role) {
+  return String(role || '').toUpperCase() === 'ADMIN';
+}
+
+async function loadCurrentUserProfile() {
+  if (!state.currentUser?.id) {
+    state.currentUserProfile = null;
+    return null;
+  }
+
+  const { data, error } = await supabaseClient.from('profiles').select('id, full_name, email, role').eq('id', state.currentUser.id).single();
+  if (error) {
+    state.currentUserProfile = null;
+    return null;
+  }
+
+  state.currentUserProfile = data;
+  return data;
+}
+
 async function recordAudit(action, entityType, entityId, details = {}) {
   if (!state.currentUser) return;
 
@@ -192,10 +213,12 @@ async function initSession() {
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (session) {
     state.currentUser = session.user;
+    await loadCurrentUserProfile();
     await renderUserState();
     await loadAllModules();
   } else {
     state.currentUser = null;
+    state.currentUserProfile = null;
     await renderUserState();
   }
 }
@@ -246,25 +269,20 @@ async function registerUser(name, email, password) {
     return;
   }
 
-  if (data.session) {
-    const { error: profileError } = await supabaseClient.from('profiles').upsert(
-      { id: data.user.id, full_name: name, email, role: 'VIEWER' },
-      { onConflict: 'id' }
-    );
+  const { error: profileError } = await supabaseClient.from('profiles').upsert(
+    { id: data.user.id, full_name: name, email, role: 'VIEWER' },
+    { onConflict: 'id' }
+  );
 
-    if (profileError) {
-      showMessage('El usuario quedó creado en Auth, pero falló el perfil: ' + profileError.message, true);
-      return;
-    }
-
-    await recordAudit('create_user', 'profile', data.user.id, { name, email, role: 'VIEWER' });
-    showMessage('Cuenta creada correctamente. Ya puedes iniciar sesión.');
-    switchTab('login');
-    document.getElementById('registerForm').reset();
+  if (profileError) {
+    showMessage('El usuario quedó creado en Auth, pero falló el perfil: ' + profileError.message, true);
     return;
   }
 
-  showMessage('Cuenta creada. Si la confirmación por email está activada, revisa tu correo antes de iniciar sesión.');
+  await recordAudit('create_user', 'profile', data.user.id, { name, email, role: 'VIEWER' });
+  showMessage('Cuenta creada correctamente. Ya puedes iniciar sesión.');
+  switchTab('login');
+  document.getElementById('registerForm').reset();
   switchTab('login');
   document.getElementById('registerForm').reset();
 }
@@ -459,7 +477,13 @@ async function loadUsers() {
     return;
   }
 
+  const currentUserRole = state.currentUserProfile?.role || 'VIEWER';
+
   data.forEach((profile) => {
+    const isCurrentUser = profile.id === state.currentUser?.id;
+    const isTargetAdmin = isAdminRole(profile.role);
+    const canChangePassword = isCurrentUser || (isAdminRole(currentUserRole) && !isTargetAdmin);
+
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${profile.full_name || 'Sin nombre'}</td>
@@ -467,7 +491,7 @@ async function loadUsers() {
       <td>${profile.role || 'VIEWER'}</td>
       <td>
         <button class="secondary-action-btn" data-id="${profile.id}" data-type="edit-user">Editar</button>
-        <button class="secondary-action-btn" data-id="${profile.email || profile.id}" data-type="reset-user-password">Reset clave</button>
+        <button class="secondary-action-btn" data-id="${profile.id}" data-type="reset-user-password" ${canChangePassword ? '' : 'disabled title="No puedes cambiar la contraseña de otro administrador"'}>${canChangePassword ? 'Cambiar clave' : 'Bloqueado'}</button>
         <button class="action-btn" data-id="${profile.id}" data-type="delete-user">Eliminar</button>
       </td>
     `;
@@ -639,6 +663,8 @@ async function loadInvoices() {
 }
 
 async function loadHistory() {
+  const selectedFilter = document.getElementById('historyFilter')?.value || 'all';
+
   const [movementsResult, invoicesResult, productsResult, customersResult, suppliersResult] = await Promise.all([
     supabaseClient.from('inventory_movements').select('*').order('created_at', { ascending: false }),
     supabaseClient.from('invoices').select('*').order('created_at', { ascending: false }),
@@ -662,6 +688,7 @@ async function loadHistory() {
     const product = productMap.get(movement.product_id);
     const typeLabel = movement.type === 'ENTRY' ? 'Entrada' : movement.type === 'EXIT' ? 'Salida' : 'Ajuste';
     rows.push({
+      source: 'inventory',
       created_at: movement.created_at,
       type: typeLabel,
       typeKey: movement.type || 'ENTRY',
@@ -680,6 +707,7 @@ async function loadHistory() {
       : customerMap.get(invoice.customer_id)?.name || 'Cliente';
 
     rows.push({
+      source: 'invoice',
       created_at: invoice.created_at,
       type: invoice.type === 'PURCHASE' ? 'Compra' : 'Venta',
       typeKey: invoice.type === 'PURCHASE' ? 'PURCHASE' : 'SALE',
@@ -691,15 +719,22 @@ async function loadHistory() {
     });
   });
 
-  rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const filteredRows = rows.filter((row) => selectedFilter === 'all' || row.source === selectedFilter);
+  filteredRows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-  if (rows.length === 0) {
-    generalBody.innerHTML = '<tr><td colspan="6" class="empty-state">No hay movimientos de inventario ni facturación.</td></tr>';
-    personalBody.innerHTML = '<tr><td colspan="6" class="empty-state">No hay historial personal.</td></tr>';
+  if (filteredRows.length === 0) {
+    const emptyMessage = selectedFilter === 'all'
+      ? 'No hay movimientos de inventario ni facturación.'
+      : selectedFilter === 'inventory'
+        ? 'No hay movimientos de inventario para este filtro.'
+        : 'No hay facturas para este filtro.';
+
+    generalBody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyMessage}</td></tr>`;
+    personalBody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyMessage}</td></tr>`;
     return;
   }
 
-  rows.forEach((row) => {
+  filteredRows.forEach((row) => {
     const badgeClass = row.typeKey === 'ENTRY' ? 'history-badge-entry' : row.typeKey === 'EXIT' ? 'history-badge-exit' : row.typeKey === 'PURCHASE' ? 'history-badge-purchase' : row.typeKey === 'SALE' ? 'history-badge-sale' : 'history-badge-adjust';
 
     const generalRow = document.createElement('tr');
@@ -1021,16 +1056,56 @@ async function saveUser(event) {
   }
 
   if (id) {
-    const { error } = await supabaseClient.from('profiles').update({ full_name: name, email, role }).eq('id', id);
-    if (error) {
-      alert(error.message);
+    const { data: targetProfile, error: targetProfileError } = await supabaseClient.from('profiles').select('role').eq('id', id).single();
+    if (targetProfileError) {
+      alert('No se pudo validar el rol del usuario: ' + targetProfileError.message);
       return;
     }
 
-    await recordAudit('update_profile', 'profile', id, { full_name: name, email, role });
+    const currentUserRole = state.currentUserProfile?.role || 'VIEWER';
+    const isCurrentUser = id === state.currentUser?.id;
+    const isTargetAdmin = isAdminRole(targetProfile?.role);
+    const isAdminChangingOtherAdmin = isAdminRole(currentUserRole) && !isCurrentUser && isTargetAdmin;
+
+    if (isAdminChangingOtherAdmin) {
+      alert('Un administrador no puede cambiar la contraseña de otro administrador.');
+      return;
+    }
+
+    const { error: profileError } = await supabaseClient.from('profiles').update({ full_name: name, email, role }).eq('id', id);
+    if (profileError) {
+      alert(profileError.message);
+      return;
+    }
+
+    if (password) {
+      try {
+        if (id === state.currentUser?.id) {
+          const { error: authError } = await supabaseClient.auth.updateUser({ password });
+          if (authError) {
+            alert('La información del usuario se actualizó, pero la contraseña no pudo cambiarse: ' + authError.message);
+            return;
+          }
+        } else {
+          if (!isAdminRole(currentUserRole)) {
+            alert('Solo un administrador puede cambiar la contraseña de otro usuario.');
+            return;
+          }
+
+          alert('Para cambiar la clave de otro usuario, debes hacerlo desde un backend seguro con service_role. En la app solo se bloquea la edición de otros administradores.');
+          return;
+        }
+      } catch (error) {
+        alert('No se pudo actualizar la contraseña desde esta sesión: ' + (error?.message || 'Error desconocido'));
+        return;
+      }
+    }
+
+    await recordAudit('update_profile', 'profile', id, { full_name: name, email, role, passwordChanged: Boolean(password) });
     form.reset();
     delete form.dataset.editingId;
     document.getElementById('userSubmitBtn').textContent = 'Guardar';
+    document.getElementById('adminUserPassword').required = true;
     await loadAllModules();
     return;
   }
@@ -1062,19 +1137,40 @@ async function saveUser(event) {
   await loadAllModules();
 }
 
-async function resetPasswordForUser(email) {
-  if (!email) {
-    alert('No hay correo para restablecer la clave.');
+async function resetPasswordForUser(userId) {
+  if (!userId) {
+    alert('No hay usuario seleccionado para cambiar la clave.');
     return;
   }
 
-  const { error } = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
-  if (error) {
-    alert(error.message);
+  const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', userId).single();
+  if (error || !data) {
+    alert('No se pudo cargar el usuario para cambiar la contraseña.');
     return;
   }
 
-  alert('Se enviaron instrucciones para restablecer la contraseña al correo del usuario.');
+  const currentUserRole = state.currentUserProfile?.role || 'VIEWER';
+
+  if (isAdminRole(data.role) && userId !== state.currentUser?.id && isAdminRole(currentUserRole)) {
+    alert('No puedes cambiar la contraseña de otro administrador.');
+    return;
+  }
+
+  if (userId !== state.currentUser?.id && !isAdminRole(currentUserRole)) {
+    alert('Solo un administrador puede cambiar la contraseña de otro usuario.');
+    return;
+  }
+
+  document.getElementById('userName').value = data.full_name || '';
+  document.getElementById('userEmail').value = data.email || '';
+  document.getElementById('userRole').value = data.role || 'VIEWER';
+  document.getElementById('userForm').dataset.editingId = userId;
+  document.getElementById('userSubmitBtn').textContent = 'Guardar nueva contraseña';
+  document.getElementById('adminUserPassword').value = '';
+  document.getElementById('adminUserPassword').required = true;
+  document.getElementById('adminUserPassword').focus();
+  await setActiveView('users');
+  document.getElementById('userForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function deleteRecord(type, id) {
@@ -1142,6 +1238,7 @@ async function startEditUser(id) {
   document.getElementById('userName').value = data.full_name || '';
   document.getElementById('userEmail').value = data.email || '';
   document.getElementById('userRole').value = data.role || 'VIEWER';
+  document.getElementById('adminUserPassword').value = '';
   document.getElementById('userForm').dataset.editingId = id;
   document.getElementById('userSubmitBtn').textContent = 'Actualizar';
   document.getElementById('adminUserPassword').required = false;
@@ -1176,6 +1273,10 @@ document.querySelectorAll('.tab').forEach((tab) => {
 
 document.querySelectorAll('.history-tab').forEach((tab) => {
   tab.addEventListener('click', () => switchHistoryTab(tab.dataset.history));
+});
+
+document.getElementById('historyFilter')?.addEventListener('change', async () => {
+  await loadHistory();
 });
 
 document.getElementById('inventoryHistoryBtn')?.addEventListener('click', () => openModuleHistory('inventory'));
