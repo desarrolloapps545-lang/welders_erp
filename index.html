@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Welders ERP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="authView" class="auth-screen">
+      <div class="auth-card">
+        <div class="brand-box">
+          <span class="brand-mark">WI</span>
+          <h1>Welders ERP</h1>
+        </div>
+
+        <div class="auth-tabs">
+          <button class="tab active" data-tab="login">Iniciar sesión</button>
+          <button class="tab" data-tab="register">Registrar</button>
+        </div>
+
+        <form id="loginForm" class="auth-form active-form">
+          <label>
+            Email
+            <input type="email" id="loginEmail" placeholder="admin@welders.com" required />
+          </label>
+          <label>
+            Contraseña
+            <input type="password" id="loginPassword" placeholder="••••••••" required />
+          </label>
+          <button type="submit" class="primary-btn">Entrar</button>
+        </form>
+
+        <form id="registerForm" class="auth-form">
+          <label>
+            Nombre completo
+            <input type="text" id="registerName" placeholder="Tu nombre" required />
+          </label>
+          <label>
+            Email
+            <input type="email" id="registerEmail" placeholder="tu@email.com" required />
+          </label>
+          <label>
+            Contraseña
+            <input type="password" id="registerPassword" placeholder="Mínimo 6 caracteres" required />
+          </label>
+          <button type="submit" class="primary-btn">Crear cuenta</button>
+        </form>
+
+        <div id="authMessage" class="message"></div>
+      </div>
+    </div>
+
+    <div id="appView" class="app hidden">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="brand-mark small">WI</div>
+          <div>
+            <strong>Welders</strong>
+            <small>ERP</small>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-item active" data-view="dashboard">Dashboard</button>
+          <button class="nav-item" data-view="products">Productos</button>
+          <button class="nav-item" data-view="customers">Clientes</button>
+          <button class="nav-item" data-view="suppliers">Proveedores</button>
+          <button class="nav-item" data-view="inventory">Inventario</button>
+          <button class="nav-item" data-view="invoices">Facturación</button>
+          <button class="nav-item" data-view="history">Historial</button>
+          <button class="nav-item" data-view="users">Usuarios</button>
+        </nav>
+
+        <button id="logoutBtn" class="secondary-btn logout-btn">Cerrar sesión</button>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Panel</p>
+            <h2 id="pageTitle">Dashboard</h2>
+          </div>
+          <div class="user-badge">
+            <span id="userNameLabel">Usuario</span>
+          </div>
+        </header>
+
+        <section id="dashboardView" class="view active-view">
+          <div class="stats-grid">
+            <article class="stat-card">
+              <span>Total productos</span>
+              <strong id="productsTotal">0</strong>
+            </article>
+            <article class="stat-card warning">
+              <span>Clientes</span>
+              <strong id="customersTotal">0</strong>
+            </article>
+            <article class="stat-card success">
+              <span>Proveedores</span>
+              <strong id="suppliersTotal">0</strong>
+            </article>
+            <article class="stat-card accent">
+              <span>Usuarios</span>
+              <strong id="usersTotal">0</strong>
+            </article>
+          </div>
+        </section>
+
+        <section id="productsView" class="view">
+          <div class="panel">
+            <h3>Productos</h3>
+            <form id="productForm" class="row-form">
+              <input type="text" id="productName" placeholder="Nombre del producto" required />
+              <input type="text" id="productCode" placeholder="Código" required />
+              <input type="text" id="productPrice" placeholder="Precio" inputmode="decimal" required />
+              <input type="text" id="productStock" placeholder="Stock" inputmode="numeric" required />
+              <input type="text" id="productMeasure" placeholder="Medida (gal, kg, caja, und)" required />
+              <select id="productSupplierId">
+                <option value="">Sin proveedor</option>
+              </select>
+              <button type="submit" id="productSubmitBtn" class="primary-btn">Guardar</button>
+            </form>
+          </div>
+
+          <div class="panel table-panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Nombre</th>
+                  <th>Medida</th>
+                  <th>Precio</th>
+                  <th>Stock</th>
+                  <th>Proveedor</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="productsTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="customersView" class="view">
+          <div class="panel">
+            <h3>Clientes</h3>
+            <form id="customerForm" class="row-form">
+              <input type="text" id="customerName" placeholder="Nombre del cliente" required />
+              <input type="text" id="customerPhone" placeholder="Teléfono" />
+              <input type="email" id="customerEmail" placeholder="Email" />
+              <button type="submit" id="customerSubmitBtn" class="primary-btn">Guardar</button>
+            </form>
+          </div>
+
+          <div class="panel table-panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Teléfono</th>
+                  <th>Email</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="customersTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="suppliersView" class="view">
+          <div class="panel">
+            <h3>Proveedores</h3>
+            <form id="supplierForm" class="row-form">
+              <input type="text" id="supplierName" placeholder="Nombre del proveedor" required />
+              <input type="text" id="supplierPhone" placeholder="Teléfono" />
+              <input type="email" id="supplierEmail" placeholder="Email" />
+              <button type="submit" id="supplierSubmitBtn" class="primary-btn">Guardar</button>
+            </form>
+          </div>
+
+          <div class="panel table-panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Teléfono</th>
+                  <th>Email</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="suppliersTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="inventoryView" class="view">
+          <div class="panel">
+            <div class="toolbar-row">
+              <h3>Movimiento de inventario</h3>
+              <button type="button" id="inventoryHistoryBtn" class="secondary-btn">Ver historial</button>
+            </div>
+            <form id="inventoryForm" class="row-form">
+              <select id="inventoryType">
+                <option value="ENTRY">Entrada</option>
+                <option value="EXIT">Salida</option>
+                <option value="ADJUSTMENT">Ajuste</option>
+              </select>
+              <select id="inventoryProductId"></select>
+              <input type="text" id="inventoryQty" placeholder="Cantidad" inputmode="decimal" required />
+              <input type="text" id="inventoryMeasure" placeholder="Medida (gal, kg, caja)" readonly />
+              <input type="text" id="inventoryNote" placeholder="Nota" />
+              <button type="submit" class="primary-btn">Guardar movimiento</button>
+            </form>
+          </div>
+
+          <div class="panel table-panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Medida</th>
+                  <th>Nota</th>
+                  <th>Fecha</th>
+                </tr>
+              </thead>
+              <tbody id="inventoryTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="invoicesView" class="view">
+          <div class="panel">
+            <div class="toolbar-row">
+              <h3>Facturación</h3>
+              <button type="button" id="invoiceHistoryBtn" class="secondary-btn">Ver historial</button>
+            </div>
+            <form id="invoiceForm" class="row-form">
+              <select id="invoiceType">
+                <option value="SALE">Venta</option>
+                <option value="PURCHASE">Compra</option>
+              </select>
+              <select id="invoiceCustomerId"></select>
+              <select id="invoiceSupplierId" class="hidden"></select>
+              <input type="text" id="invoiceNumber" placeholder="Número factura" required />
+              <select id="invoiceProductId"></select>
+              <input type="text" id="invoiceQty" placeholder="Cantidad" inputmode="decimal" required />
+              <input type="text" id="invoicePrice" placeholder="Precio unitario" inputmode="decimal" required />
+              <input type="text" id="invoiceNote" placeholder="Observación" />
+              <button type="submit" class="primary-btn">Crear factura</button>
+            </form>
+          </div>
+
+          <div class="panel table-panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>Factura</th>
+                  <th>Cliente</th>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Total</th>
+                  <th>Fecha</th>
+                </tr>
+              </thead>
+              <tbody id="invoicesTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="historyView" class="view">
+          <div class="panel">
+            <div class="history-tabs">
+              <button class="history-tab active" data-history="general">General</button>
+              <button class="history-tab" data-history="personal">Mi historial</button>
+            </div>
+            <div id="historyGeneral" class="history-table active-history">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Tipo</th>
+                    <th>Producto</th>
+                    <th>Cantidad</th>
+                    <th>Total compras</th>
+                    <th>Total ventas</th>
+                    <th>Detalle</th>
+                  </tr>
+                </thead>
+                <tbody id="historyGeneralBody"></tbody>
+              </table>
+            </div>
+            <div id="historyPersonal" class="history-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Tipo</th>
+                    <th>Producto</th>
+                    <th>Cantidad</th>
+                    <th>Total compras</th>
+                    <th>Total ventas</th>
+                    <th>Detalle</th>
+                  </tr>
+                </thead>
+                <tbody id="historyPersonalBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <div id="moduleHistoryModal" class="modal hidden">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3 id="moduleHistoryTitle">Historial</h3>
+              <button type="button" id="closeModuleHistory" class="secondary-btn">Cerrar</button>
+            </div>
+            <div id="moduleHistoryBody" class="history-modal-list"></div>
+          </div>
+        </div>
+
+        <section id="usersView" class="view">
+          <div class="panel">
+            <h3>Usuarios</h3>
+            <form id="userForm" class="row-form">
+              <input type="text" id="userName" placeholder="Nombre completo" required />
+              <input type="email" id="userEmail" placeholder="Email" required />
+              <input type="password" id="adminUserPassword" placeholder="Contraseña" required />
+              <select id="userRole">
+                <option value="ADMIN">ADMIN</option>
+                <option value="OPERATIVE">OPERATIVE</option>
+                <option value="VIEWER">VIEWER</option>
+              </select>
+              <button type="submit" id="userSubmitBtn" class="primary-btn">Guardar</button>
+            </form>
+          </div>
+
+          <div class="panel table-panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Email</th>
+                  <th>Rol</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="usersTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
