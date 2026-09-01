@@ -284,39 +284,90 @@ button, input, select {
   font-size: 1.05rem;
 }
 
+.accounts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.accounts-header h3 {
+  margin: 0;
+}
+
+.accounts-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.accounts-filters input,
+.accounts-filters select {
+  min-width: 180px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.accounts-filters input::placeholder {
+  color: #94a3b8;
+}
+
+.accounts-filters select option {
+  background: #111827;
+  color: #e5e7eb;
+}
+
 .debt-list {
   list-style: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .debt-list li {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr 1.4fr 1.5fr 1fr 1fr 1.1fr auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: rgba(15, 23, 42, 0.4);
 }
 
-.debt-list .debt-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.debt-list .debt-row {
+  min-width: 0;
 }
 
-.debt-list .debt-name {
-  font-weight: 600;
+.debt-list .debt-cell {
+  min-width: 0;
+  color: #e5e7eb;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.debt-list .debt-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .debt-list .debt-amount {
   font-weight: 700;
   color: var(--warning);
+  text-align: right;
 }
 
 .debt-list .empty-item {
@@ -515,12 +566,19 @@ button, input, select {
   flex-wrap: wrap;
 }
 
-.history-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 0;
+.invoice-toolbar {
+  justify-content: flex-end;
 }
 
+.invoice-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.invoice-filters input,
+.invoice-filters select,
 .history-filter-select {
   min-width: 180px;
   background: rgba(15, 23, 42, 0.7);
@@ -529,6 +587,22 @@ button, input, select {
   border-radius: 10px;
   padding: 10px 14px;
   outline: none;
+}
+
+.invoice-filters input::placeholder {
+  color: var(--muted);
+}
+
+.invoice-filters select option,
+.history-filter-select option {
+  background: #111827;
+  color: var(--text);
+}
+
+.history-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 0;
 }
 
 .history-tab {

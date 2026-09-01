@@ -19,6 +19,8 @@ const pageTitle = document.getElementById('pageTitle');
 
 const views = {
   dashboard: document.getElementById('dashboardView'),
+  receivables: document.getElementById('receivablesView'),
+  payables: document.getElementById('payablesView'),
   products: document.getElementById('productsView'),
   customers: document.getElementById('customersView'),
   suppliers: document.getElementById('suppliersView'),
@@ -58,6 +60,21 @@ function resetUserFormState() {
   if (submitBtn) submitBtn.textContent = 'Guardar';
 }
 
+function syncInvoicePaymentFields(form = document) {
+  const paymentTypeField = getFormField(form, 'invoicePaymentType', 'invoicePaymentType');
+  const initialPaymentField = getFormField(form, 'invoiceInitialPayment', 'invoiceInitialPayment');
+
+  if (!paymentTypeField || !initialPaymentField) return;
+
+  const isAbono = (paymentTypeField.value || 'TOTAL').toUpperCase() === 'ABONO';
+  initialPaymentField.classList.toggle('hidden', !isAbono);
+  initialPaymentField.disabled = !isAbono;
+
+  if (!isAbono) {
+    initialPaymentField.value = '';
+  }
+}
+
 function resetFormState(form) {
   if (!form || typeof form.reset !== 'function') return;
 
@@ -65,12 +82,18 @@ function resetFormState(form) {
 
   if (form.id === 'invoiceForm') {
     const invoiceType = document.getElementById('invoiceType');
+    const operationType = document.getElementById('invoiceOperationType');
     const customerSelect = document.getElementById('invoiceCustomerId');
     const supplierSelect = document.getElementById('invoiceSupplierId');
     const paymentType = document.getElementById('invoicePaymentType');
+    const initialPayment = document.getElementById('invoiceInitialPayment');
     const preview = document.getElementById('invoiceTotalPreview');
 
     if (invoiceType) invoiceType.value = 'SALE';
+    if (operationType) {
+      operationType.value = 'DESPACHO';
+      operationType.disabled = true;
+    }
     if (customerSelect) {
       customerSelect.disabled = false;
       customerSelect.classList.remove('hidden');
@@ -80,6 +103,11 @@ function resetFormState(form) {
       supplierSelect.classList.add('hidden');
     }
     if (paymentType) paymentType.value = 'TOTAL';
+    if (initialPayment) {
+      initialPayment.value = '';
+      initialPayment.classList.add('hidden');
+      initialPayment.disabled = true;
+    }
     if (preview) preview.textContent = formatMoney(0);
   }
 
@@ -159,6 +187,36 @@ function getTypeLabel(type) {
   return map[String(type || '').toUpperCase()] || String(type || '-');
 }
 
+function getInvoiceOperationValue(invoice) {
+  const rawValue = invoice?.operation_type || invoice?.operationType || invoice?.operation || invoice?.note || '';
+  const normalized = String(rawValue).trim().toUpperCase();
+
+  if (!normalized) return 'SIN_TIPO';
+  if (normalized.includes('REM')) return 'REMISION';
+  if (normalized.includes('DESP')) return 'DESPACHO';
+  return normalized;
+}
+
+function getInvoiceOperationLabel(invoice) {
+  const value = getInvoiceOperationValue(invoice);
+  const map = {
+    DESPACHO: 'Despacho',
+    REMISION: 'Remisión',
+    SIN_TIPO: 'Sin tipo',
+  };
+
+  return map[value] || 'Sin tipo';
+}
+
+function getInvoiceOperationId(invoice) {
+  if (!invoice) return '';
+
+  const rawId = invoice.operation_id ?? invoice.operationTypeId ?? invoice.operation_type_id ?? invoice.operationId ?? invoice.id_operacion ?? '';
+  if (rawId === null || rawId === undefined || rawId === '') return '';
+
+  return String(rawId).trim();
+}
+
 function formatDate(value) {
   if (!value) return '-';
   return new Date(value).toLocaleDateString('es-CO', {
@@ -187,6 +245,8 @@ function formatAuditDetails(details) {
 function setPageTitle(viewName) {
   const map = {
     dashboard: 'Dashboard',
+    receivables: 'Cuentas por cobrar',
+    payables: 'Cuentas por pagar',
     products: 'Productos',
     customers: 'Clientes',
     suppliers: 'Proveedores',
@@ -251,6 +311,8 @@ async function setActiveView(viewName) {
     if (viewName === 'customers') await loadCustomers();
     if (viewName === 'suppliers') await loadSuppliers();
     if (viewName === 'invoices') await loadInvoices();
+    if (viewName === 'receivables') await loadAccountsReceivable();
+    if (viewName === 'payables') await loadAccountsPayable();
     if (viewName === 'users') await loadUsers();
     if (viewName === 'history') await loadHistory();
     if (viewName === 'dashboard') await loadDashboard();
@@ -391,7 +453,7 @@ async function loadDashboard() {
   const purchasesTotal = invoices.filter((invoice) => invoice.type === 'PURCHASE').reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
   const pendingCustomerDebt = invoices.filter((invoice) => invoice.type === 'SALE' && Number(invoice.balance || 0) > 0).reduce((sum, invoice) => sum + Number(invoice.balance || 0), 0);
   const pendingSupplierDebt = invoices.filter((invoice) => invoice.type === 'PURCHASE' && Number(invoice.balance || 0) > 0).reduce((sum, invoice) => sum + Number(invoice.balance || 0), 0);
-  const netBalance = salesTotal - purchasesTotal;
+  const grossProfit = salesTotal - purchasesTotal;
 
   const customerDebtList = document.getElementById('customerDebtList');
   const supplierDebtList = document.getElementById('supplierDebtList');
@@ -428,13 +490,125 @@ async function loadDashboard() {
     })
     .join('') || '<li class="empty-item">No hay deudas pendientes.</li>';
 
-  document.getElementById('productsTotal').textContent = productsResult.data?.length ?? 0;
-  document.getElementById('customerPaymentsTotal').textContent = formatMoney(pendingCustomerDebt);
-  document.getElementById('supplierPaymentsTotal').textContent = formatMoney(pendingSupplierDebt);
-  document.getElementById('netBalanceTotal').textContent = `${netBalance >= 0 ? 'A favor' : 'Debe'} ${formatMoney(Math.abs(netBalance))}`;
+  document.getElementById('productsTotal').textContent = formatMoney(purchasesTotal);
+  document.getElementById('customerPaymentsTotal').textContent = formatMoney(salesTotal);
+  document.getElementById('supplierPaymentsTotal').textContent = formatMoney(grossProfit);
+  document.getElementById('netBalanceTotal').textContent = `${grossProfit >= 0 ? 'Utilidad' : 'Pérdida'} ${formatMoney(Math.abs(grossProfit))}`;
   document.getElementById('customersTotal')?.remove();
   document.getElementById('suppliersTotal')?.remove();
   document.getElementById('usersTotal')?.remove();
+}
+
+async function loadAccountsReceivable() {
+  const [invoicesResult, customersResult, productsResult] = await Promise.all([
+    supabaseClient.from('invoices').select('*').order('created_at', { ascending: false }),
+    supabaseClient.from('customers').select('*'),
+    supabaseClient.from('products').select('*'),
+  ]);
+
+  const receivableSearch = document.getElementById('receivableInvoiceSearch');
+  const receivableBody = document.getElementById('accountsReceivableList');
+  if (!receivableBody) return;
+
+  const customerMap = new Map((customersResult.data || []).map((customer) => [customer.id, customer]));
+  const productMap = new Map((productsResult.data || []).map((product) => [product.id, product]));
+  const rows = (invoicesResult.data || [])
+    .filter((invoice) => invoice.type === 'SALE' && String(invoice.payment_type || 'TOTAL').toUpperCase() === 'ABONO' && Number(invoice.balance || 0) > 0)
+    .map((invoice) => {
+      const product = productMap.get(invoice.product_id);
+      return {
+        id: invoice.id,
+        name: customerMap.get(invoice.customer_id)?.name || 'Cliente',
+        invoice_number: invoice.invoice_number || 'Factura',
+        operation: getInvoiceOperationLabel(invoice),
+        productName: product?.name || 'Producto',
+        quantity: invoice.quantity ?? 0,
+        measure: product?.measure || 'und',
+        createdAt: invoice.created_at,
+        operation_id: getInvoiceOperationId(invoice),
+        balance: Number(invoice.balance || 0),
+        search: `${invoice.invoice_number || ''} ${getInvoiceOperationId(invoice) || ''} ${getInvoiceOperationLabel(invoice)}`.toLowerCase(),
+      };
+    })
+    .filter((invoice) => {
+      const searchTerm = (receivableSearch?.value || '').trim().toLowerCase();
+      return !searchTerm || invoice.search.includes(searchTerm);
+    });
+
+  receivableBody.innerHTML = rows.length
+    ? rows.map((row) => `
+        <li class="debt-row">
+          <div class="debt-cell">${row.invoice_number || '-'}</div>
+          <div class="debt-cell">${row.operation_id || '-'}</div>
+          <div class="debt-cell">${row.operation || '-'}</div>
+          <div class="debt-cell">${row.name}</div>
+          <div class="debt-cell">${row.productName}</div>
+          <div class="debt-cell">${row.quantity} ${row.measure}</div>
+          <div class="debt-cell">${formatDate(row.createdAt)}</div>
+          <div class="debt-cell debt-amount">${formatMoney(row.balance)}</div>
+          <div class="debt-cell debt-actions">
+            <button class="secondary-action-btn" data-id="${row.id}" data-type="add-invoice-abono">Abonar</button>
+            <button class="secondary-action-btn" data-id="${row.id}" data-type="view-invoice-payments">Abonos</button>
+          </div>
+        </li>
+      `).join('')
+    : '<li class="empty-item">No hay facturas en abono por cobrar.</li>';
+}
+
+async function loadAccountsPayable() {
+  const [invoicesResult, suppliersResult, productsResult] = await Promise.all([
+    supabaseClient.from('invoices').select('*').order('created_at', { ascending: false }),
+    supabaseClient.from('suppliers').select('*'),
+    supabaseClient.from('products').select('*'),
+  ]);
+
+  const payableSearch = document.getElementById('payableInvoiceSearch');
+  const payableBody = document.getElementById('accountsPayableList');
+  if (!payableBody) return;
+
+  const supplierMap = new Map((suppliersResult.data || []).map((supplier) => [supplier.id, supplier]));
+  const productMap = new Map((productsResult.data || []).map((product) => [product.id, product]));
+  const rows = (invoicesResult.data || [])
+    .filter((invoice) => invoice.type === 'PURCHASE' && String(invoice.payment_type || 'TOTAL').toUpperCase() === 'ABONO' && Number(invoice.balance || 0) > 0)
+    .map((invoice) => {
+      const product = productMap.get(invoice.product_id);
+      return {
+        id: invoice.id,
+        name: supplierMap.get(invoice.supplier_id)?.name || 'Proveedor',
+        invoice_number: invoice.invoice_number || 'Factura',
+        operation: getInvoiceOperationLabel(invoice),
+        productName: product?.name || 'Producto',
+        quantity: invoice.quantity ?? 0,
+        measure: product?.measure || 'und',
+        createdAt: invoice.created_at,
+        operation_id: getInvoiceOperationId(invoice),
+        balance: Number(invoice.balance || 0),
+        search: `${invoice.invoice_number || ''} ${getInvoiceOperationId(invoice) || ''} ${getInvoiceOperationLabel(invoice)}`.toLowerCase(),
+      };
+    })
+    .filter((invoice) => {
+      const searchTerm = (payableSearch?.value || '').trim().toLowerCase();
+      return !searchTerm || invoice.search.includes(searchTerm);
+    });
+
+  payableBody.innerHTML = rows.length
+    ? rows.map((row) => `
+        <li class="debt-row">
+          <div class="debt-cell">${row.invoice_number || '-'}</div>
+          <div class="debt-cell">${row.operation_id || '-'}</div>
+          <div class="debt-cell">${row.operation || '-'}</div>
+          <div class="debt-cell">${row.name}</div>
+          <div class="debt-cell">${row.productName}</div>
+          <div class="debt-cell">${row.quantity} ${row.measure}</div>
+          <div class="debt-cell">${formatDate(row.createdAt)}</div>
+          <div class="debt-cell debt-amount">${formatMoney(row.balance)}</div>
+          <div class="debt-cell debt-actions">
+            <button class="secondary-action-btn" data-id="${row.id}" data-type="add-invoice-abono">Abonar</button>
+            <button class="secondary-action-btn" data-id="${row.id}" data-type="view-invoice-payments">Abonos</button>
+          </div>
+        </li>
+      `).join('')
+    : '<li class="empty-item">No hay facturas en abono por pagar.</li>';
 }
 
 function fillProductSelects() {
@@ -721,11 +895,12 @@ async function loadInvoices() {
     return;
   }
 
+  const invoiceSearch = document.getElementById('invoiceListSearch');
   const tbody = document.getElementById('invoicesTableBody');
   tbody.innerHTML = '';
 
   if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No hay facturas.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No hay facturas.</td></tr>';
     return;
   }
 
@@ -736,20 +911,51 @@ async function loadInvoices() {
   const supplierMap = new Map((suppliers.data || []).map((s) => [s.id, s]));
   const productMap = new Map((products.data || []).map((p) => [p.id, p]));
 
-  data.forEach((invoice) => {
-    const customer = customerMap.get(invoice.customer_id);
-    const supplier = supplierMap.get(invoice.supplier_id);
-    const product = productMap.get(invoice.product_id);
-    const type = invoice.type || invoice.kind || 'SALE';
-    const partyName = type === 'PURCHASE' ? (supplier ? supplier.name : '-') : (customer ? customer.name : '-');
-    const balance = Number(invoice.balance || 0);
-    const hasAbono = String(invoice.payment_type || '').toUpperCase() === 'ABONO';
-    const totalDisplay = hasAbono ? `${formatMoney(invoice.paid_amount || 0)}/${formatMoney(invoice.total || 0)}` : formatMoney(invoice.total || 0);
-    const paymentTypeLabel = hasAbono ? 'Abono' : 'Total';
+  const rows = (data || [])
+    .map((invoice) => {
+      const customer = customerMap.get(invoice.customer_id);
+      const supplier = supplierMap.get(invoice.supplier_id);
+      const product = productMap.get(invoice.product_id);
+      const type = invoice.type || invoice.kind || 'SALE';
+      const partyName = type === 'PURCHASE' ? (supplier ? supplier.name : '-') : (customer ? customer.name : '-');
+      const operationLabel = getInvoiceOperationLabel(invoice);
+      const operationId = getInvoiceOperationId(invoice);
+      const hasAbono = String(invoice.payment_type || '').toUpperCase() === 'ABONO';
+      const totalDisplay = hasAbono && Number(invoice.balance || 0) > 0
+        ? `${formatMoney(Number(invoice.paid_amount || 0))}/${formatMoney(Number(invoice.total || 0))}`
+        : formatMoney(Number(invoice.total || 0));
+      const paymentTypeLabel = hasAbono ? 'Abono' : 'Total';
+      return {
+        invoice,
+        customer,
+        supplier,
+        product,
+        type,
+        partyName,
+        operationLabel,
+        operationId,
+        totalDisplay,
+        paymentTypeLabel,
+        search: `${invoice.invoice_number || ''} ${operationId} ${operationLabel}`.toLowerCase(),
+      };
+    })
+    .filter((row) => {
+      const searchTerm = (invoiceSearch?.value || '').trim().toLowerCase();
+      const matchesSearch = !searchTerm || row.search.includes(searchTerm);
+      return matchesSearch;
+    });
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No hay facturas para este filtro.</td></tr>';
+    return;
+  }
+
+  rows.forEach(({ invoice, partyName, product, operationLabel, operationId, totalDisplay, paymentTypeLabel }) => {
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${invoice.invoice_number || '-'}</td>
-      <td>${getTypeLabel(type)}</td>
+      <td>${operationId || '-'}</td>
+      <td>${operationLabel}</td>
       <td>${partyName}</td>
       <td>${product ? product.name : '-'}</td>
       <td>${invoice.quantity ?? 0}</td>
@@ -758,8 +964,6 @@ async function loadInvoices() {
       <td>${formatDate(invoice.created_at)}</td>
       <td>
         <button class="secondary-action-btn" data-id="${invoice.id}" data-type="edit-invoice">Editar</button>
-        ${hasAbono && balance > 0 ? `<button class="secondary-action-btn" data-id="${invoice.id}" data-type="add-invoice-abono">Abonar</button>` : ''}
-        ${hasAbono ? `<button class="secondary-action-btn" data-id="${invoice.id}" data-type="view-invoice-payments">Abonos</button>` : ''}
       </td>
     `;
     tbody.appendChild(row);
@@ -816,15 +1020,22 @@ async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBa
     newBalance: nextBalance,
   });
 
-  await loadAllModules();
+  await Promise.all([
+    loadInvoices(),
+    loadHistory(),
+    loadDashboard(),
+    loadAccountsReceivable(),
+    loadAccountsPayable(),
+  ]);
 }
 
 async function loadHistory() {
   const typeFilter = document.getElementById('historyTypeFilter')?.value || 'all';
   const paymentFilter = document.getElementById('historyPaymentFilter')?.value || 'all';
 
-  const [invoicesResult, productsResult, customersResult, suppliersResult] = await Promise.all([
+  const [invoicesResult, paymentsResult, productsResult, customersResult, suppliersResult] = await Promise.all([
     supabaseClient.from('invoices').select('*').order('created_at', { ascending: false }),
+    supabaseClient.from('invoice_payments').select('*').order('created_at', { ascending: false }),
     supabaseClient.from('products').select('*'),
     supabaseClient.from('customers').select('*'),
     supabaseClient.from('suppliers').select('*'),
@@ -833,6 +1044,7 @@ async function loadHistory() {
   const productMap = new Map((productsResult.data || []).map((product) => [product.id, product]));
   const customerMap = new Map((customersResult.data || []).map((customer) => [customer.id, customer]));
   const supplierMap = new Map((suppliersResult.data || []).map((supplier) => [supplier.id, supplier]));
+  const invoiceMap = new Map((invoicesResult.data || []).map((invoice) => [invoice.id, invoice]));
 
   const generalBody = document.getElementById('historyGeneralBody');
   const personalBody = document.getElementById('historyPersonalBody');
@@ -841,31 +1053,41 @@ async function loadHistory() {
 
   const rows = [];
 
-  (invoicesResult.data || []).forEach((invoice) => {
+  (paymentsResult.data || []).forEach((payment) => {
+    const invoice = invoiceMap.get(payment.invoice_id);
+    if (!invoice) return;
+
     const product = productMap.get(invoice.product_id);
     const partyName = invoice.type === 'PURCHASE'
       ? supplierMap.get(invoice.supplier_id)?.name || 'Proveedor'
       : customerMap.get(invoice.customer_id)?.name || 'Cliente';
 
-    const paymentType = String(invoice.payment_type || 'TOTAL').toUpperCase();
-    const typeKey = invoice.type === 'PURCHASE' ? 'PURCHASE' : 'SALE';
+    const paymentType = String(payment.payment_type || 'ABONO').toUpperCase();
+    const operationType = getInvoiceOperationValue(invoice);
+    const operationLabel = getInvoiceOperationLabel(invoice);
+    const operationId = getInvoiceOperationId(invoice);
+    const totalValue = Number(payment.amount || 0);
+
+    const detailLabel = paymentType === 'TOTAL' ? 'Pago neto' : 'Abono';
 
     rows.push({
-      source: 'invoice',
-      created_at: invoice.created_at,
-      type: invoice.type === 'PURCHASE' ? 'Compra' : 'Venta',
-      typeKey,
+      source: 'payment',
+      created_at: payment.created_at || invoice.created_at,
+      invoiceNumber: invoice.invoice_number || '-',
+      operationId,
+      operationType,
+      operationLabel,
       paymentType,
       product: product ? product.name : 'Producto',
       quantity: `${invoice.quantity ?? 0} ${product?.measure || 'und'}`,
-      totalCompra: invoice.type === 'PURCHASE' ? formatMoney(invoice.total || 0) : '-',
-      totalVenta: invoice.type === 'SALE' ? formatMoney(invoice.total || 0) : '-',
-      detail: `${invoice.type === 'PURCHASE' ? 'Compra a' : 'Venta a'} ${partyName}${invoice.payment_type === 'ABONO' ? ` • Abono ${formatMoney(invoice.paid_amount || 0)} • Saldo ${formatMoney(invoice.balance || 0)}` : ` • Pago total ${formatMoney(invoice.total || 0)}`}`,
+      total: formatMoney(totalValue),
+      detail: `${invoice.type === 'PURCHASE' ? detailLabel + ' de compra' : detailLabel + ' de venta'} ${partyName} • ${formatMoney(payment.amount || 0)}`,
+      badgeClass: operationType === 'REMISION' ? 'history-badge-purchase' : 'history-badge-sale',
     });
   });
 
   const filteredRows = rows.filter((row) => {
-    const typeMatches = typeFilter === 'all' || row.typeKey === typeFilter;
+    const typeMatches = typeFilter === 'all' || row.operationType === typeFilter;
     const paymentMatches = paymentFilter === 'all' || row.paymentType === paymentFilter;
     return typeMatches && paymentMatches;
   });
@@ -874,22 +1096,21 @@ async function loadHistory() {
 
   if (filteredRows.length === 0) {
     const emptyMessage = 'No hay facturas para este filtro.';
-    generalBody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyMessage}</td></tr>`;
-    personalBody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyMessage}</td></tr>`;
+    generalBody.innerHTML = `<tr><td colspan="8" class="empty-state">${emptyMessage}</td></tr>`;
+    personalBody.innerHTML = `<tr><td colspan="8" class="empty-state">${emptyMessage}</td></tr>`;
     return;
   }
 
   filteredRows.forEach((row) => {
-    const badgeClass = row.typeKey === 'PURCHASE' ? 'history-badge-purchase' : 'history-badge-sale';
-
     const generalRow = document.createElement('tr');
     generalRow.innerHTML = `
       <td>${formatDate(row.created_at)}</td>
-      <td><span class="history-badge ${badgeClass}">${row.type}</span></td>
+      <td>${row.invoiceNumber || '-'}</td>
+      <td>${row.operationId || '-'}</td>
+      <td><span class="history-badge ${row.badgeClass}">${row.operationLabel}</span></td>
       <td>${row.product}</td>
       <td>${row.quantity}</td>
-      <td>${row.totalCompra}</td>
-      <td>${row.totalVenta}</td>
+      <td>${row.total}</td>
       <td>${row.detail}</td>
     `;
     generalBody.appendChild(generalRow);
@@ -897,11 +1118,12 @@ async function loadHistory() {
     const personalRow = document.createElement('tr');
     personalRow.innerHTML = `
       <td>${formatDate(row.created_at)}</td>
-      <td><span class="history-badge ${badgeClass}">${row.type}</span></td>
+      <td>${row.invoiceNumber || '-'}</td>
+      <td>${row.operationId || '-'}</td>
+      <td><span class="history-badge ${row.badgeClass}">${row.operationLabel}</span></td>
       <td>${row.product}</td>
       <td>${row.quantity}</td>
-      <td>${row.totalCompra}</td>
-      <td>${row.totalVenta}</td>
+      <td>${row.total}</td>
       <td>${row.detail}</td>
     `;
     personalBody.appendChild(personalRow);
@@ -911,6 +1133,8 @@ async function loadHistory() {
 async function loadAllModules() {
   await Promise.all([
     loadDashboard(),
+    loadAccountsReceivable(),
+    loadAccountsPayable(),
     loadProducts(),
     loadCustomers(),
     loadSuppliers(),
@@ -1052,37 +1276,14 @@ async function saveInventoryMovement(event) {
     return;
   }
 
-  const { data: productData, error: productError } = await supabaseClient
-    .from('products')
-    .select('*')
-    .eq('id', payload.product_id)
-    .single();
-
-  if (productError || !productData) {
-    alert('No se pudo obtener el producto para registrar el movimiento.');
+  if (payload.quantity <= 0) {
+    alert('La cantidad debe ser mayor a cero.');
     return;
   }
-
-  let newStock = Number(productData.stock || 0);
-
-  if (payload.type === 'EXIT' && payload.quantity > newStock) {
-    alert(`No hay suficiente stock para el producto ${productData.name}. Stock actual: ${newStock}.`);
-    return;
-  }
-
-  if (payload.type === 'ENTRY') newStock += payload.quantity;
-  if (payload.type === 'EXIT') newStock -= payload.quantity;
-  if (payload.type === 'ADJUSTMENT') newStock = payload.quantity;
 
   const { error: movementError } = await supabaseClient.from('inventory_movements').insert([payload]);
   if (movementError) {
     alert(movementError.message);
-    return;
-  }
-
-  const { error: stockError } = await supabaseClient.from('products').update({ stock: newStock, measure: payload.measure || productData.measure || 'und' }).eq('id', payload.product_id);
-  if (stockError) {
-    alert(stockError.message);
     return;
   }
 
@@ -1106,6 +1307,8 @@ async function saveInvoice(event) {
   const qtyField = getFormField(form, 'invoiceQty', 'invoiceQty');
   const priceField = getFormField(form, 'invoicePrice', 'invoicePrice');
   const paymentTypeField = getFormField(form, 'invoicePaymentType', 'invoicePaymentType');
+  const operationTypeField = getFormField(form, 'invoiceOperationType', 'invoiceOperationType');
+  const initialPaymentField = getFormField(form, 'invoiceInitialPayment', 'invoiceInitialPayment');
   const noteField = getFormField(form, 'invoiceNote', 'invoiceNote');
 
   const type = typeField?.value || 'SALE';
@@ -1133,6 +1336,11 @@ async function saveInvoice(event) {
   const quantity = parseFormattedNumber(qtyField?.value);
   const price = parseFormattedNumber(priceField?.value);
   const paymentType = paymentTypeField?.value || 'TOTAL';
+  const operationType = type === 'PURCHASE' ? 'REMISION' : 'DESPACHO';
+  if (operationTypeField) {
+    operationTypeField.value = operationType;
+  }
+  const initialPaymentAmount = parseFormattedNumber(initialPaymentField?.value);
   const note = noteField?.value.trim() || '';
 
   const partyId = type === 'PURCHASE' ? supplierId : customerId;
@@ -1162,6 +1370,11 @@ async function saveInvoice(event) {
   const total = quantity * productPrice;
   const normalizedPaymentType = paymentType === 'ABONO' ? 'ABONO' : 'TOTAL';
 
+  if (normalizedPaymentType === 'ABONO' && initialPaymentAmount > total) {
+    alert(`El abono inicial no puede superar el total de la factura (${formatMoney(total)}).`);
+    return;
+  }
+
   let finalPaidAmount = 0;
   let finalBalance = total;
 
@@ -1181,7 +1394,7 @@ async function saveInvoice(event) {
       finalBalance = Math.max(total - finalPaidAmount, 0);
     }
   } else {
-    finalPaidAmount = normalizedPaymentType === 'TOTAL' ? total : 0;
+    finalPaidAmount = normalizedPaymentType === 'TOTAL' ? total : initialPaymentAmount;
     finalBalance = total - finalPaidAmount;
   }
 
@@ -1195,6 +1408,7 @@ async function saveInvoice(event) {
     unit_price: productPrice,
     total,
     payment_type: normalizedPaymentType,
+    operation_type: operationType,
     paid_amount: finalPaidAmount,
     balance: finalBalance,
     status: finalBalance > 0 ? 'PENDING' : 'PAID',
@@ -1219,7 +1433,11 @@ async function saveInvoice(event) {
       await registerInvoicePayment(invoiceResult.id, invoiceResult.total, 'TOTAL');
     }
 
-    await recordAudit(editingInvoiceId ? 'update_invoice' : 'create_invoice', 'invoice', invoiceResult.id, { customerId, supplierId, invoiceNumber, total, type, paymentType: normalizedPaymentType, paidAmount: finalPaidAmount, balance: finalBalance });
+    if (!editingInvoiceId && normalizedPaymentType === 'ABONO' && initialPaymentAmount > 0) {
+      await registerInvoicePayment(invoiceResult.id, initialPaymentAmount, 'ABONO');
+    }
+
+    await recordAudit(editingInvoiceId ? 'update_invoice' : 'create_invoice', 'invoice', invoiceResult.id, { customerId, supplierId, invoiceNumber, total, type, paymentType: normalizedPaymentType, paidAmount: finalPaidAmount, balance: finalBalance, initialPaymentAmount });
   }
 
   if (form) {
@@ -1816,6 +2034,14 @@ document.getElementById('historyPaymentFilter')?.addEventListener('change', asyn
   await loadHistory();
 });
 
+document.getElementById('invoiceListSearch')?.addEventListener('input', async () => {
+  await loadInvoices();
+});
+
+document.getElementById('invoiceOperationFilter')?.addEventListener('change', async () => {
+  await loadInvoices();
+});
+
 document.getElementById('invoiceHistoryBtn')?.addEventListener('click', () => openModuleHistory('invoice'));
 document.getElementById('closeModuleHistory')?.addEventListener('click', () => {
   const modal = document.getElementById('moduleHistoryModal');
@@ -1885,13 +2111,41 @@ async function refreshInvoiceFormDefaults() {
   }
 }
 
+document.getElementById('invoicePaymentType')?.addEventListener('change', () => {
+  syncInvoicePaymentFields(document);
+});
+
+document.getElementById('receivableInvoiceSearch')?.addEventListener('input', async () => {
+  await loadAccountsReceivable();
+});
+
+document.getElementById('receivableOperationFilter')?.addEventListener('change', async () => {
+  await loadAccountsReceivable();
+});
+
+document.getElementById('payableInvoiceSearch')?.addEventListener('input', async () => {
+  await loadAccountsPayable();
+});
+
+document.getElementById('payableOperationFilter')?.addEventListener('change', async () => {
+  await loadAccountsPayable();
+});
+
+syncInvoicePaymentFields(document);
+
 document.getElementById('invoiceType').addEventListener('change', async (event) => {
   const isPurchase = event.target.value === 'PURCHASE';
   const customerSelect = document.getElementById('invoiceCustomerId');
   const supplierSelect = document.getElementById('invoiceSupplierId');
+  const operationTypeField = document.getElementById('invoiceOperationType');
   const productId = document.getElementById('invoiceProductId').value;
 
   await syncInvoiceNumber();
+
+  if (operationTypeField) {
+    operationTypeField.value = isPurchase ? 'REMISION' : 'DESPACHO';
+    operationTypeField.disabled = true;
+  }
 
   if (customerSelect) {
     customerSelect.classList.toggle('hidden', isPurchase);

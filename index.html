@@ -70,6 +70,8 @@
           <button class="nav-item" data-view="customers">Clientes</button>
           <button class="nav-item" data-view="suppliers">Proveedores</button>
           <button class="nav-item" data-view="invoices">Facturación</button>
+          <button class="nav-item" data-view="receivables">Cuentas por cobrar</button>
+          <button class="nav-item" data-view="payables">Cuentas por pagar</button>
           <button class="nav-item" data-view="history">Historial</button>
           <button class="nav-item" data-view="users">Usuarios</button>
         </nav>
@@ -91,19 +93,19 @@
         <section id="dashboardView" class="view active-view">
           <div class="stats-grid">
             <article class="stat-card">
-              <span>Productos</span>
-              <strong id="productsTotal">0</strong>
+              <span>Total compras</span>
+              <strong id="productsTotal">$0</strong>
             </article>
             <article class="stat-card warning">
-              <span>Pagos pendientes</span>
+              <span>Total ventas</span>
               <strong id="customerPaymentsTotal">$0</strong>
             </article>
             <article class="stat-card success">
-              <span>Pagos proveedores</span>
+              <span>Utilidad bruta</span>
               <strong id="supplierPaymentsTotal">$0</strong>
             </article>
             <article class="stat-card accent">
-              <span>Saldo neto</span>
+              <span>Resultado</span>
               <strong id="netBalanceTotal">$0</strong>
             </article>
           </div>
@@ -118,6 +120,31 @@
               <h3>Deudas pendientes por pagar a proveedores</h3>
               <ul id="supplierDebtList" class="debt-list"></ul>
             </article>
+          </div>
+
+        </section>
+
+        <section id="receivablesView" class="view">
+          <div class="panel">
+            <div class="accounts-header">
+              <h3>Cuentas por cobrar</h3>
+              <div class="accounts-filters">
+                <input id="receivableInvoiceSearch" type="text" placeholder="Buscar factura o id de operación" />
+              </div>
+            </div>
+            <ul id="accountsReceivableList" class="debt-list"></ul>
+          </div>
+        </section>
+
+        <section id="payablesView" class="view">
+          <div class="panel">
+            <div class="accounts-header">
+              <h3>Cuentas por pagar</h3>
+              <div class="accounts-filters">
+                <input id="payableInvoiceSearch" type="text" placeholder="Buscar factura o id de operación" />
+              </div>
+            </div>
+            <ul id="accountsPayableList" class="debt-list"></ul>
           </div>
         </section>
 
@@ -218,6 +245,11 @@
                 <option value="TOTAL">Pago total</option>
                 <option value="ABONO">Abono</option>
               </select>
+              <select id="invoiceOperationType" disabled>
+                <option value="DESPACHO">Despacho</option>
+                <option value="REMISION">Remisión</option>
+              </select>
+              <input type="text" id="invoiceInitialPayment" class="hidden" placeholder="Abono inicial" inputmode="decimal" />
               <input type="text" id="invoiceNote" placeholder="Observación" />
               <div class="invoice-summary">
                 <span>Total estimado</span>
@@ -228,10 +260,21 @@
           </div>
 
           <div class="panel table-panel">
+            <div class="history-toolbar invoice-toolbar">
+              <div class="history-filters invoice-filters">
+                <input id="invoiceListSearch" type="text" placeholder="Buscar factura o id de operación" />
+                <select id="invoiceOperationFilter" class="history-filter-select">
+                  <option value="all">Todas</option>
+                  <option value="DESPACHO">Despacho</option>
+                  <option value="REMISION">Remisión</option>
+                </select>
+              </div>
+            </div>
             <table>
               <thead>
                 <tr>
                   <th>Factura</th>
+                  <th>ID operación</th>
                   <th>Tipo</th>
                   <th>Cliente/Proveedor</th>
                   <th>Producto</th>
@@ -256,14 +299,14 @@
               </div>
               <div class="history-filters">
                 <select id="historyTypeFilter" class="history-filter-select">
-                  <option value="all">Todo</option>
-                  <option value="SALE">Solo ventas</option>
-                  <option value="PURCHASE">Solo compras</option>
+                  <option value="all">Todas</option>
+                  <option value="DESPACHO">Despacho</option>
+                  <option value="REMISION">Remisión</option>
                 </select>
                 <select id="historyPaymentFilter" class="history-filter-select">
                   <option value="all">Todo</option>
-                  <option value="TOTAL">Pagadas totalmente</option>
-                  <option value="ABONO">Pagadas en abono</option>
+                  <option value="TOTAL">Pago total</option>
+                  <option value="ABONO">Abono</option>
                 </select>
               </div>
             </div>
@@ -272,11 +315,12 @@
                 <thead>
                   <tr>
                     <th>Fecha</th>
-                    <th>Tipo</th>
+                    <th>Factura</th>
+                    <th>ID operación</th>
+                    <th>Operación lado</th>
                     <th>Producto</th>
                     <th>Cantidad</th>
-                    <th>Total compras</th>
-                    <th>Total ventas</th>
+                    <th>Total</th>
                     <th>Detalle</th>
                   </tr>
                 </thead>
@@ -288,11 +332,12 @@
                 <thead>
                   <tr>
                     <th>Fecha</th>
-                    <th>Tipo</th>
+                    <th>Factura</th>
+                    <th>ID operación</th>
+                    <th>Operación lado</th>
                     <th>Producto</th>
                     <th>Cantidad</th>
-                    <th>Total compras</th>
-                    <th>Total ventas</th>
+                    <th>Total</th>
                     <th>Detalle</th>
                   </tr>
                 </thead>
