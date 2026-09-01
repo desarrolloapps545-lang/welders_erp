@@ -22,7 +22,6 @@ const views = {
   products: document.getElementById('productsView'),
   customers: document.getElementById('customersView'),
   suppliers: document.getElementById('suppliersView'),
-  inventory: document.getElementById('inventoryView'),
   invoices: document.getElementById('invoicesView'),
   history: document.getElementById('historyView'),
   users: document.getElementById('usersView'),
@@ -31,6 +30,63 @@ const views = {
 function showMessage(text, isError = false) {
   authMessage.textContent = text;
   authMessage.style.color = isError ? '#fca5a5' : '#86efac';
+}
+
+function getFormField(form, fieldId, fallbackId = null) {
+  const field = form?.querySelector(`#${fieldId}`) || document.getElementById(fieldId) || (fallbackId ? document.getElementById(fallbackId) : null);
+  return field || null;
+}
+
+function closeEditModal() {
+  const modal = document.getElementById('recordEditModal');
+  const body = document.getElementById('recordEditBody');
+  if (modal) modal.classList.add('hidden');
+  if (body) body.innerHTML = '';
+}
+
+function resetUserFormState() {
+  const userForm = document.getElementById('userForm');
+  if (!userForm) return;
+
+  userForm.reset();
+  delete userForm.dataset.editingId;
+  const passwordField = document.getElementById('adminUserPassword');
+  if (passwordField) {
+    passwordField.required = true;
+  }
+  const submitBtn = document.getElementById('userSubmitBtn');
+  if (submitBtn) submitBtn.textContent = 'Guardar';
+}
+
+function resetFormState(form) {
+  if (!form || typeof form.reset !== 'function') return;
+
+  form.reset();
+
+  if (form.id === 'invoiceForm') {
+    const invoiceType = document.getElementById('invoiceType');
+    const customerSelect = document.getElementById('invoiceCustomerId');
+    const supplierSelect = document.getElementById('invoiceSupplierId');
+    const paymentType = document.getElementById('invoicePaymentType');
+    const preview = document.getElementById('invoiceTotalPreview');
+
+    if (invoiceType) invoiceType.value = 'SALE';
+    if (customerSelect) {
+      customerSelect.disabled = false;
+      customerSelect.classList.remove('hidden');
+    }
+    if (supplierSelect) {
+      supplierSelect.disabled = true;
+      supplierSelect.classList.add('hidden');
+    }
+    if (paymentType) paymentType.value = 'TOTAL';
+    if (preview) preview.textContent = formatMoney(0);
+  }
+
+  if (form.id === 'userForm') {
+    const passwordField = document.getElementById('adminUserPassword');
+    if (passwordField) passwordField.required = true;
+  }
 }
 
 function formatMoney(value) {
@@ -81,8 +137,8 @@ function formatNumberInput(value, allowDecimal = true) {
   return `${isNegative ? '-' : ''}${formattedInteger}${decimalSuffix}`;
 }
 
-function applyFormattedNumberListener(elementId, allowDecimal = true) {
-  const element = document.getElementById(elementId);
+function applyFormattedNumberListener(elementId, allowDecimal = true, root = document) {
+  const element = root && root.querySelector ? root.querySelector(`#${elementId}`) : document.getElementById(elementId);
   if (!element) return;
 
   element.addEventListener('input', (event) => {
@@ -134,7 +190,6 @@ function setPageTitle(viewName) {
     products: 'Productos',
     customers: 'Clientes',
     suppliers: 'Proveedores',
-    inventory: 'Inventario',
     invoices: 'Facturación',
     history: 'Historial',
     users: 'Usuarios',
@@ -189,10 +244,12 @@ async function setActiveView(viewName) {
   });
 
   if (state.currentUser) {
+    if (viewName === 'users') {
+      resetUserFormState();
+    }
     if (viewName === 'products') await loadProducts();
     if (viewName === 'customers') await loadCustomers();
     if (viewName === 'suppliers') await loadSuppliers();
-    if (viewName === 'inventory') await loadInventory();
     if (viewName === 'invoices') await loadInvoices();
     if (viewName === 'users') await loadUsers();
     if (viewName === 'history') await loadHistory();
@@ -227,7 +284,13 @@ async function renderUserState() {
   if (state.currentUser) {
     authView.classList.add('hidden');
     appView.classList.remove('hidden');
-    userNameLabel.textContent = state.currentUser.email || 'Usuario';
+
+    if (!state.currentUserProfile) {
+      await loadCurrentUserProfile();
+    }
+
+    const displayName = state.currentUserProfile?.full_name || state.currentUserProfile?.email || state.currentUser?.user_metadata?.full_name || state.currentUser?.email || 'Usuario';
+    userNameLabel.textContent = displayName;
     await setActiveView(state.activeView);
   } else {
     authView.classList.remove('hidden');
@@ -294,35 +357,97 @@ async function logoutUser() {
   showMessage('Sesión cerrada.');
 }
 
+async function registerInvoicePayment(invoiceId, amount, source = 'ABONO') {
+  if (!invoiceId || !Number(amount) || Number(amount) <= 0) return;
+
+  const { error } = await supabaseClient.from('invoice_payments').insert([
+    {
+      invoice_id: invoiceId,
+      amount: Number(amount),
+      payment_type: source,
+      created_at: new Date().toISOString(),
+    },
+  ]);
+
+  if (error) {
+    alert(error.message);
+  }
+}
+
 async function loadDashboard() {
-  const [productsResult, customersResult, suppliersResult, usersResult] = await Promise.all([
+  const [productsResult, customersResult, suppliersResult, usersResult, invoicesResult] = await Promise.all([
     supabaseClient.from('products').select('*'),
     supabaseClient.from('customers').select('*'),
     supabaseClient.from('suppliers').select('*'),
     supabaseClient.from('profiles').select('*'),
+    supabaseClient.from('invoices').select('*'),
   ]);
 
+  const invoices = invoicesResult.data || [];
+  const customerMap = new Map((customersResult.data || []).map((customer) => [customer.id, customer]));
+  const supplierMap = new Map((suppliersResult.data || []).map((supplier) => [supplier.id, supplier]));
+
+  const salesTotal = invoices.filter((invoice) => invoice.type === 'SALE').reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
+  const purchasesTotal = invoices.filter((invoice) => invoice.type === 'PURCHASE').reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
+  const pendingCustomerDebt = invoices.filter((invoice) => invoice.type === 'SALE' && Number(invoice.balance || 0) > 0).reduce((sum, invoice) => sum + Number(invoice.balance || 0), 0);
+  const pendingSupplierDebt = invoices.filter((invoice) => invoice.type === 'PURCHASE' && Number(invoice.balance || 0) > 0).reduce((sum, invoice) => sum + Number(invoice.balance || 0), 0);
+  const netBalance = salesTotal - purchasesTotal;
+
+  const customerDebtList = document.getElementById('customerDebtList');
+  const supplierDebtList = document.getElementById('supplierDebtList');
+
+  customerDebtList.innerHTML = invoices
+    .filter((invoice) => invoice.type === 'SALE' && Number(invoice.balance || 0) > 0)
+    .map((invoice) => {
+      const customerName = customerMap.get(invoice.customer_id)?.name || 'Cliente';
+      return `
+        <li>
+          <div class="debt-meta">
+            <span class="debt-name">${customerName}</span>
+            <small>${invoice.invoice_number || 'Factura'}</small>
+          </div>
+          <span class="debt-amount">${formatMoney(invoice.balance || 0)}</span>
+        </li>
+      `;
+    })
+    .join('') || '<li class="empty-item">No hay deudas pendientes.</li>';
+
+  supplierDebtList.innerHTML = invoices
+    .filter((invoice) => invoice.type === 'PURCHASE' && Number(invoice.balance || 0) > 0)
+    .map((invoice) => {
+      const supplierName = supplierMap.get(invoice.supplier_id)?.name || 'Proveedor';
+      return `
+        <li>
+          <div class="debt-meta">
+            <span class="debt-name">${supplierName}</span>
+            <small>${invoice.invoice_number || 'Factura'}</small>
+          </div>
+          <span class="debt-amount">${formatMoney(invoice.balance || 0)}</span>
+        </li>
+      `;
+    })
+    .join('') || '<li class="empty-item">No hay deudas pendientes.</li>';
+
   document.getElementById('productsTotal').textContent = productsResult.data?.length ?? 0;
-  document.getElementById('customersTotal').textContent = customersResult.data?.length ?? 0;
-  document.getElementById('suppliersTotal').textContent = suppliersResult.data?.length ?? 0;
-  document.getElementById('usersTotal').textContent = usersResult.data?.length ?? 0;
+  document.getElementById('customerPaymentsTotal').textContent = formatMoney(pendingCustomerDebt);
+  document.getElementById('supplierPaymentsTotal').textContent = formatMoney(pendingSupplierDebt);
+  document.getElementById('netBalanceTotal').textContent = `${netBalance >= 0 ? 'A favor' : 'Debe'} ${formatMoney(Math.abs(netBalance))}`;
+  document.getElementById('customersTotal')?.remove();
+  document.getElementById('suppliersTotal')?.remove();
+  document.getElementById('usersTotal')?.remove();
 }
 
 function fillProductSelects() {
-  const options = ['<option value="">Seleccione</option>'];
-  const productSelects = [document.getElementById('inventoryProductId'), document.getElementById('invoiceProductId')];
+  const productSelect = document.getElementById('invoiceProductId');
 
-  productSelects.forEach((select) => {
-    if (!select) return;
-    select.innerHTML = '<option value="">Seleccione</option>';
-  });
+  if (productSelect) {
+    productSelect.innerHTML = '<option value="">Seleccione</option>';
+  }
 
   return async function refreshProductsList(data = []) {
+    if (!productSelect) return;
     const allOptions = data.map((product) => `<option value="${product.id}">${product.name} (${product.measure || 'und'})</option>`).join('');
-    productSelects.forEach((select) => {
-      if (!select) return;
-      select.innerHTML = '<option value="">Seleccione</option>' + allOptions;
-    });
+    productSelect.innerHTML = '<option value="">Seleccione</option>' + allOptions;
   };
 }
 
@@ -356,11 +481,10 @@ async function loadProducts() {
   productsResult.data.forEach((product) => {
     const row = document.createElement('tr');
     row.innerHTML = `
-      <td>${product.code || '-'}</td>
       <td>${product.name || '-'}</td>
       <td>${product.measure || 'und'}</td>
-      <td>${formatMoney(product.price || 0)}</td>
-      <td>${product.stock ?? 0}</td>
+      <td>${formatMoney(product.purchase_price || 0)}</td>
+      <td>${formatMoney(product.sale_price || 0)}</td>
       <td>${product.supplier_id ? (suppliersResult.data || []).find((supplier) => supplier.id === product.supplier_id)?.name || 'Proveedor' : 'Sin proveedor'}</td>
       <td>
         <button class="secondary-action-btn" data-id="${product.id}" data-type="edit-product">Editar</button>
@@ -415,8 +539,6 @@ async function loadCustomers() {
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${customer.name || '-'}</td>
-      <td>${customer.phone || '-'}</td>
-      <td>${customer.email || '-'}</td>
       <td>
         <button class="secondary-action-btn" data-id="${customer.id}" data-type="edit-customer">Editar</button>
         <button class="action-btn" data-id="${customer.id}" data-type="delete-customer">Eliminar</button>
@@ -445,8 +567,6 @@ async function loadSuppliers() {
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${supplier.name || '-'}</td>
-      <td>${supplier.phone || '-'}</td>
-      <td>${supplier.email || '-'}</td>
       <td>
         <button class="secondary-action-btn" data-id="${supplier.id}" data-type="edit-supplier">Editar</button>
         <button class="action-btn" data-id="${supplier.id}" data-type="delete-supplier">Eliminar</button>
@@ -499,42 +619,6 @@ async function loadUsers() {
   });
 }
 
-async function loadInventory() {
-  const [productsResult, inventoryResult] = await Promise.all([
-    supabaseClient.from('products').select('*'),
-    supabaseClient.from('inventory_movements').select('*').order('created_at', { ascending: false }),
-  ]);
-
-  const productSelect = document.getElementById('inventoryProductId');
-  if (productSelect) {
-    productSelect.innerHTML = '<option value="">Seleccione producto</option>' + (productsResult.data || []).map((p) => `<option value="${p.id}">${p.name} (${p.measure || 'und'})</option>`).join('');
-  }
-
-  const tbody = document.getElementById('inventoryTableBody');
-  tbody.innerHTML = '';
-
-  if (!inventoryResult.data || inventoryResult.data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No hay movimientos de inventario.</td></tr>';
-    return;
-  }
-
-  const productMap = new Map((productsResult.data || []).map((product) => [product.id, product]));
-
-  inventoryResult.data.forEach((movement) => {
-    const product = productMap.get(movement.product_id);
-    const row = document.createElement('tr');
-    row.innerHTML = `
-      <td>${getTypeLabel(movement.type)}</td>
-      <td>${product ? product.name : '-'}</td>
-      <td>${movement.quantity ?? 0}</td>
-      <td>${movement.measure || '-'}</td>
-      <td>${movement.note || '-'}</td>
-      <td>${formatDate(movement.created_at)}</td>
-    `;
-    tbody.appendChild(row);
-  });
-}
-
 async function openModuleHistory(module) {
   const modal = document.getElementById('moduleHistoryModal');
   const title = document.getElementById('moduleHistoryTitle');
@@ -542,39 +626,11 @@ async function openModuleHistory(module) {
 
   if (!modal || !title || !body) return;
 
-  title.textContent = module === 'inventory' ? 'Historial de inventario' : 'Historial de facturación';
+  title.textContent = 'Historial de facturación';
   body.innerHTML = '<div class="empty-state">Cargando...</div>';
   modal.classList.remove('hidden');
 
   try {
-    if (module === 'inventory') {
-      const [productsResult, movementsResult] = await Promise.all([
-        supabaseClient.from('products').select('*'),
-        supabaseClient.from('inventory_movements').select('*').order('created_at', { ascending: false }),
-      ]);
-
-      const productMap = new Map((productsResult.data || []).map((product) => [product.id, product]));
-      const rows = (movementsResult.data || []).map((movement) => {
-        const product = productMap.get(movement.product_id);
-        return `
-          <div class="history-modal-item">
-            <div class="history-modal-head">
-              <strong>${getTypeLabel(movement.type)}</strong>
-              <span>${formatDate(movement.created_at)}</span>
-            </div>
-            <div class="history-modal-body-text">
-              <span>Producto: ${product ? product.name : 'Sin producto'}</span>
-              <span>Cantidad: ${movement.quantity ?? 0} ${movement.measure || product?.measure || 'und'}</span>
-              <span>Nota: ${movement.note || 'Sin observación'}</span>
-            </div>
-          </div>
-        `;
-      }).join('');
-
-      body.innerHTML = rows || '<div class="empty-state">No hay movimientos de inventario.</div>';
-      return;
-    }
-
     const [productsResult, invoicesResult, customersResult, suppliersResult] = await Promise.all([
       supabaseClient.from('products').select('*'),
       supabaseClient.from('invoices').select('*').order('created_at', { ascending: false }),
@@ -593,6 +649,10 @@ async function openModuleHistory(module) {
         ? supplierMap.get(invoice.supplier_id)?.name || 'Proveedor'
         : customerMap.get(invoice.customer_id)?.name || 'Cliente';
 
+      const paymentInfo = invoice.payment_type === 'ABONO'
+        ? ` | Abono: ${formatMoney(invoice.paid_amount || 0)} | Saldo: ${formatMoney(invoice.balance || 0)}`
+        : ` | Pago total: ${formatMoney(invoice.total || 0)}`;
+
       return `
         <div class="history-modal-item">
           <div class="history-modal-head">
@@ -603,7 +663,7 @@ async function openModuleHistory(module) {
             <span>Producto: ${product ? product.name : 'Sin producto'}</span>
             <span>Cliente/Proveedor: ${partyName}</span>
             <span>Cantidad: ${invoice.quantity ?? 0}</span>
-            <span>Total: ${formatMoney(invoice.total || 0)}</span>
+            <span>Total: ${formatMoney(invoice.total || 0)}${paymentInfo}</span>
           </div>
         </div>
       `;
@@ -614,6 +674,40 @@ async function openModuleHistory(module) {
     console.error(error);
     body.innerHTML = '<div class="empty-state">No se pudo cargar el historial.</div>';
   }
+}
+
+async function generateInvoiceNumber(type = 'SALE', currentInvoiceId = null) {
+  const { data, error } = await supabaseClient
+    .from('invoices')
+    .select('id, invoice_number, type');
+
+  if (error) {
+    console.error(error);
+    return '0001';
+  }
+
+  let highestNumber = 0;
+
+  (data || []).forEach((invoice) => {
+    if (currentInvoiceId && invoice.id === currentInvoiceId) return;
+    const rawNumber = String(invoice.invoice_number || '').replace(/\D/g, '');
+    if (!rawNumber) return;
+    const numericValue = Number(rawNumber);
+    if (!Number.isNaN(numericValue) && numericValue > highestNumber) {
+      highestNumber = numericValue;
+    }
+  });
+
+  return String(highestNumber + 1).padStart(4, '0');
+}
+
+async function syncInvoiceNumber() {
+  const invoiceType = document.getElementById('invoiceType')?.value || 'SALE';
+  const invoiceNumberField = document.getElementById('invoiceNumber');
+  if (!invoiceNumberField) return;
+
+  const nextNumber = await generateInvoiceNumber(invoiceType);
+  invoiceNumberField.value = nextNumber;
 }
 
 async function loadInvoices() {
@@ -631,7 +725,7 @@ async function loadInvoices() {
   tbody.innerHTML = '';
 
   if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No hay facturas.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No hay facturas.</td></tr>';
     return;
   }
 
@@ -648,6 +742,10 @@ async function loadInvoices() {
     const product = productMap.get(invoice.product_id);
     const type = invoice.type || invoice.kind || 'SALE';
     const partyName = type === 'PURCHASE' ? (supplier ? supplier.name : '-') : (customer ? customer.name : '-');
+    const balance = Number(invoice.balance || 0);
+    const hasAbono = String(invoice.payment_type || '').toUpperCase() === 'ABONO';
+    const totalDisplay = hasAbono ? `${formatMoney(invoice.paid_amount || 0)}/${formatMoney(invoice.total || 0)}` : formatMoney(invoice.total || 0);
+    const paymentTypeLabel = hasAbono ? 'Abono' : 'Total';
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${invoice.invoice_number || '-'}</td>
@@ -655,18 +753,77 @@ async function loadInvoices() {
       <td>${partyName}</td>
       <td>${product ? product.name : '-'}</td>
       <td>${invoice.quantity ?? 0}</td>
-      <td>${formatMoney(invoice.total || 0)}</td>
+      <td>${totalDisplay}</td>
+      <td>${paymentTypeLabel}</td>
       <td>${formatDate(invoice.created_at)}</td>
+      <td>
+        <button class="secondary-action-btn" data-id="${invoice.id}" data-type="edit-invoice">Editar</button>
+        ${hasAbono && balance > 0 ? `<button class="secondary-action-btn" data-id="${invoice.id}" data-type="add-invoice-abono">Abonar</button>` : ''}
+        ${hasAbono ? `<button class="secondary-action-btn" data-id="${invoice.id}" data-type="view-invoice-payments">Abonos</button>` : ''}
+      </td>
     `;
     tbody.appendChild(row);
   });
 }
 
-async function loadHistory() {
-  const selectedFilter = document.getElementById('historyFilter')?.value || 'all';
+async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBalance) {
+  if (!invoiceId) return;
 
-  const [movementsResult, invoicesResult, productsResult, customersResult, suppliersResult] = await Promise.all([
-    supabaseClient.from('inventory_movements').select('*').order('created_at', { ascending: false }),
+  const remainingBalance = Number(currentBalance || 0);
+  if (remainingBalance <= 0) {
+    alert('Esta factura ya está totalmente pagada.');
+    return;
+  }
+
+  const amountPrompt = window.prompt('Ingrese el valor del abono adicional:', '0');
+  if (amountPrompt === null) return;
+
+  const amount = Number(String(amountPrompt).replace(/\./g, '').replace(',', '.').trim());
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert('El abono debe ser mayor a cero.');
+    return;
+  }
+
+  if (amount > remainingBalance) {
+    alert(`El abono no puede superar el saldo pendiente de ${formatMoney(remainingBalance)}.`);
+    return;
+  }
+
+  const nextPaid = Number(currentPaid || 0) + amount;
+  const nextBalance = Number(currentTotal || 0) - nextPaid;
+
+  const { error } = await supabaseClient
+    .from('invoices')
+    .update({
+      paid_amount: nextPaid,
+      balance: nextBalance,
+      status: nextBalance > 0 ? 'PENDING' : 'PAID',
+      payment_type: 'ABONO',
+    })
+    .eq('id', invoiceId);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  await registerInvoicePayment(invoiceId, amount, 'ABONO');
+
+  await recordAudit('add_invoice_abono', 'invoice', invoiceId, {
+    previousPaid: Number(currentPaid || 0),
+    addedAmount: amount,
+    newPaid: nextPaid,
+    newBalance: nextBalance,
+  });
+
+  await loadAllModules();
+}
+
+async function loadHistory() {
+  const typeFilter = document.getElementById('historyTypeFilter')?.value || 'all';
+  const paymentFilter = document.getElementById('historyPaymentFilter')?.value || 'all';
+
+  const [invoicesResult, productsResult, customersResult, suppliersResult] = await Promise.all([
     supabaseClient.from('invoices').select('*').order('created_at', { ascending: false }),
     supabaseClient.from('products').select('*'),
     supabaseClient.from('customers').select('*'),
@@ -684,58 +841,46 @@ async function loadHistory() {
 
   const rows = [];
 
-  (movementsResult.data || []).forEach((movement) => {
-    const product = productMap.get(movement.product_id);
-    const typeLabel = movement.type === 'ENTRY' ? 'Entrada' : movement.type === 'EXIT' ? 'Salida' : 'Ajuste';
-    rows.push({
-      source: 'inventory',
-      created_at: movement.created_at,
-      type: typeLabel,
-      typeKey: movement.type || 'ENTRY',
-      product: product ? product.name : 'Producto',
-      quantity: `${movement.quantity ?? 0} ${movement.measure || product?.measure || 'und'}`,
-      totalCompra: '-',
-      totalVenta: '-',
-      detail: movement.note || 'Sin observación',
-    });
-  });
-
   (invoicesResult.data || []).forEach((invoice) => {
     const product = productMap.get(invoice.product_id);
     const partyName = invoice.type === 'PURCHASE'
       ? supplierMap.get(invoice.supplier_id)?.name || 'Proveedor'
       : customerMap.get(invoice.customer_id)?.name || 'Cliente';
 
+    const paymentType = String(invoice.payment_type || 'TOTAL').toUpperCase();
+    const typeKey = invoice.type === 'PURCHASE' ? 'PURCHASE' : 'SALE';
+
     rows.push({
       source: 'invoice',
       created_at: invoice.created_at,
       type: invoice.type === 'PURCHASE' ? 'Compra' : 'Venta',
-      typeKey: invoice.type === 'PURCHASE' ? 'PURCHASE' : 'SALE',
+      typeKey,
+      paymentType,
       product: product ? product.name : 'Producto',
       quantity: `${invoice.quantity ?? 0} ${product?.measure || 'und'}`,
       totalCompra: invoice.type === 'PURCHASE' ? formatMoney(invoice.total || 0) : '-',
       totalVenta: invoice.type === 'SALE' ? formatMoney(invoice.total || 0) : '-',
-      detail: `${invoice.type === 'PURCHASE' ? 'Compra a' : 'Venta a'} ${partyName}`,
+      detail: `${invoice.type === 'PURCHASE' ? 'Compra a' : 'Venta a'} ${partyName}${invoice.payment_type === 'ABONO' ? ` • Abono ${formatMoney(invoice.paid_amount || 0)} • Saldo ${formatMoney(invoice.balance || 0)}` : ` • Pago total ${formatMoney(invoice.total || 0)}`}`,
     });
   });
 
-  const filteredRows = rows.filter((row) => selectedFilter === 'all' || row.source === selectedFilter);
+  const filteredRows = rows.filter((row) => {
+    const typeMatches = typeFilter === 'all' || row.typeKey === typeFilter;
+    const paymentMatches = paymentFilter === 'all' || row.paymentType === paymentFilter;
+    return typeMatches && paymentMatches;
+  });
+
   filteredRows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   if (filteredRows.length === 0) {
-    const emptyMessage = selectedFilter === 'all'
-      ? 'No hay movimientos de inventario ni facturación.'
-      : selectedFilter === 'inventory'
-        ? 'No hay movimientos de inventario para este filtro.'
-        : 'No hay facturas para este filtro.';
-
+    const emptyMessage = 'No hay facturas para este filtro.';
     generalBody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyMessage}</td></tr>`;
     personalBody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyMessage}</td></tr>`;
     return;
   }
 
   filteredRows.forEach((row) => {
-    const badgeClass = row.typeKey === 'ENTRY' ? 'history-badge-entry' : row.typeKey === 'EXIT' ? 'history-badge-exit' : row.typeKey === 'PURCHASE' ? 'history-badge-purchase' : row.typeKey === 'SALE' ? 'history-badge-sale' : 'history-badge-adjust';
+    const badgeClass = row.typeKey === 'PURCHASE' ? 'history-badge-purchase' : 'history-badge-sale';
 
     const generalRow = document.createElement('tr');
     generalRow.innerHTML = `
@@ -769,7 +914,6 @@ async function loadAllModules() {
     loadProducts(),
     loadCustomers(),
     loadSuppliers(),
-    loadInventory(),
     loadInvoices(),
     loadUsers(),
     loadHistory(),
@@ -781,13 +925,18 @@ async function saveProduct(event) {
 
   const form = event.currentTarget;
   const id = form.dataset.editingId || null;
+  const nameField = getFormField(form, 'productName', 'productName');
+  const purchaseField = getFormField(form, 'productPurchasePrice', 'productPurchasePrice');
+  const saleField = getFormField(form, 'productSalePrice', 'productSalePrice');
+  const measureField = getFormField(form, 'productMeasure', 'productMeasure');
+  const supplierField = getFormField(form, 'productSupplierId', 'productSupplierId');
+
   const payload = {
-    name: document.getElementById('productName').value.trim(),
-    code: document.getElementById('productCode').value.trim(),
-    price: parseFormattedNumber(document.getElementById('productPrice').value),
-    stock: parseFormattedNumber(document.getElementById('productStock').value),
-    measure: document.getElementById('productMeasure').value.trim() || 'und',
-    supplier_id: document.getElementById('productSupplierId').value || null,
+    name: nameField?.value.trim(),
+    purchase_price: parseFormattedNumber(purchaseField?.value),
+    sale_price: parseFormattedNumber(saleField?.value),
+    measure: measureField?.value.trim() || 'und',
+    supplier_id: supplierField?.value || null,
   };
 
   let result;
@@ -806,9 +955,13 @@ async function saveProduct(event) {
     return;
   }
 
-  form.reset();
+  resetFormState(form);
   delete form.dataset.editingId;
-  document.getElementById('productSubmitBtn').textContent = 'Guardar';
+  if (form.id !== 'productForm') {
+    closeEditModal();
+  } else {
+    document.getElementById('productSubmitBtn').textContent = 'Guardar';
+  }
   await loadAllModules();
 }
 
@@ -816,10 +969,9 @@ async function saveCustomer(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const id = form.dataset.editingId || null;
+  const nameField = getFormField(form, 'customerName', 'customerName');
   const payload = {
-    name: document.getElementById('customerName').value.trim(),
-    phone: document.getElementById('customerPhone').value.trim(),
-    email: document.getElementById('customerEmail').value.trim(),
+    name: nameField?.value.trim(),
   };
 
   let result;
@@ -838,9 +990,13 @@ async function saveCustomer(event) {
     return;
   }
 
-  form.reset();
+  resetFormState(form);
   delete form.dataset.editingId;
-  document.getElementById('customerSubmitBtn').textContent = 'Guardar';
+  if (form.id !== 'customerForm') {
+    closeEditModal();
+  } else {
+    document.getElementById('customerSubmitBtn').textContent = 'Guardar';
+  }
   await loadAllModules();
 }
 
@@ -848,10 +1004,9 @@ async function saveSupplier(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const id = form.dataset.editingId || null;
+  const nameField = getFormField(form, 'supplierName', 'supplierName');
   const payload = {
-    name: document.getElementById('supplierName').value.trim(),
-    phone: document.getElementById('supplierPhone').value.trim(),
-    email: document.getElementById('supplierEmail').value.trim(),
+    name: nameField?.value.trim(),
   };
 
   let result;
@@ -870,9 +1025,13 @@ async function saveSupplier(event) {
     return;
   }
 
-  form.reset();
+  resetFormState(form);
   delete form.dataset.editingId;
-  document.getElementById('supplierSubmitBtn').textContent = 'Guardar';
+  if (form.id !== 'supplierForm') {
+    closeEditModal();
+  } else {
+    document.getElementById('supplierSubmitBtn').textContent = 'Guardar';
+  }
   await loadAllModules();
 }
 
@@ -928,8 +1087,8 @@ async function saveInventoryMovement(event) {
   }
 
   await recordAudit('inventory_move', 'inventory_movement', payload.product_id, payload);
-  if (form && typeof form.reset === 'function') {
-    form.reset();
+  if (form) {
+    resetFormState(form);
   }
   await loadAllModules();
 }
@@ -937,14 +1096,44 @@ async function saveInventoryMovement(event) {
 async function saveInvoice(event) {
   event.preventDefault();
 
-  const type = document.getElementById('invoiceType').value || 'SALE';
-  const customerId = document.getElementById('invoiceCustomerId').value;
-  const supplierId = document.getElementById('invoiceSupplierId').value;
-  const invoiceNumber = document.getElementById('invoiceNumber').value.trim();
-  const productId = document.getElementById('invoiceProductId').value;
-  const quantity = parseFormattedNumber(document.getElementById('invoiceQty').value);
-  const price = parseFormattedNumber(document.getElementById('invoicePrice').value);
-  const note = document.getElementById('invoiceNote').value.trim();
+  const form = event?.currentTarget || document.getElementById('invoiceForm');
+  const editingInvoiceId = form.dataset.editingInvoiceId || null;
+  const typeField = getFormField(form, 'invoiceType', 'invoiceType');
+  const customerField = getFormField(form, 'invoiceCustomerId', 'invoiceCustomerId');
+  const supplierField = getFormField(form, 'invoiceSupplierId', 'invoiceSupplierId');
+  const numberField = getFormField(form, 'invoiceNumber', 'invoiceNumber');
+  const productField = getFormField(form, 'invoiceProductId', 'invoiceProductId');
+  const qtyField = getFormField(form, 'invoiceQty', 'invoiceQty');
+  const priceField = getFormField(form, 'invoicePrice', 'invoicePrice');
+  const paymentTypeField = getFormField(form, 'invoicePaymentType', 'invoicePaymentType');
+  const noteField = getFormField(form, 'invoiceNote', 'invoiceNote');
+
+  const type = typeField?.value || 'SALE';
+  const customerId = customerField?.value || '';
+  const supplierId = supplierField?.value || '';
+  let invoiceNumber = numberField?.value.trim() || '';
+  if (!invoiceNumber) {
+    invoiceNumber = await generateInvoiceNumber(type, editingInvoiceId || null);
+    if (numberField) numberField.value = invoiceNumber;
+  }
+
+  if (invoiceNumber) {
+    const { data: existingInvoiceByNumber, error: duplicateCheckError } = await supabaseClient
+      .from('invoices')
+      .select('id, invoice_number')
+      .eq('invoice_number', invoiceNumber)
+      .maybeSingle();
+
+    if (!duplicateCheckError && existingInvoiceByNumber && existingInvoiceByNumber.id !== editingInvoiceId) {
+      invoiceNumber = await generateInvoiceNumber(type, editingInvoiceId || null);
+      if (numberField) numberField.value = invoiceNumber;
+    }
+  }
+  const productId = productField?.value || '';
+  const quantity = parseFormattedNumber(qtyField?.value);
+  const price = parseFormattedNumber(priceField?.value);
+  const paymentType = paymentTypeField?.value || 'TOTAL';
+  const note = noteField?.value.trim() || '';
 
   const partyId = type === 'PURCHASE' ? supplierId : customerId;
 
@@ -969,69 +1158,83 @@ async function saveInvoice(event) {
     return;
   }
 
-  const total = quantity * price;
-  let newStock = Number(productData.stock || 0);
+  const productPrice = Number(price || (type === 'SALE' ? productData.sale_price : productData.purchase_price) || 0);
+  const total = quantity * productPrice;
+  const normalizedPaymentType = paymentType === 'ABONO' ? 'ABONO' : 'TOTAL';
 
-  if (type === 'SALE' && quantity > newStock) {
-    alert(`No hay suficiente stock para vender ${productData.name}. Stock actual: ${newStock}.`);
-    return;
-  }
+  let finalPaidAmount = 0;
+  let finalBalance = total;
 
-  if (type === 'PURCHASE') {
-    newStock += quantity;
+  if (editingInvoiceId) {
+    const { data: existingInvoice, error: existingError } = await supabaseClient.from('invoices').select('*').eq('id', editingInvoiceId).single();
+    if (existingError || !existingInvoice) {
+      alert('No se pudo cargar la factura a editar.');
+      return;
+    }
+
+    const currentPaid = Number(existingInvoice.paid_amount || 0);
+    if (normalizedPaymentType === 'TOTAL') {
+      finalPaidAmount = total;
+      finalBalance = 0;
+    } else {
+      finalPaidAmount = Math.min(Math.max(currentPaid, 0), total);
+      finalBalance = Math.max(total - finalPaidAmount, 0);
+    }
   } else {
-    newStock -= quantity;
+    finalPaidAmount = normalizedPaymentType === 'TOTAL' ? total : 0;
+    finalBalance = total - finalPaidAmount;
   }
 
-  const { data: invoiceData, error: invoiceError } = await supabaseClient.from('invoices').insert([
-    {
-      type,
-      customer_id: type === 'SALE' ? customerId : null,
-      supplier_id: type === 'PURCHASE' ? supplierId : null,
-      invoice_number: invoiceNumber,
-      product_id: productId,
-      quantity,
-      total,
-      status: 'PENDING',
-      note,
-    },
-  ]).select();
+  const payload = {
+    type,
+    customer_id: type === 'SALE' ? customerId : null,
+    supplier_id: type === 'PURCHASE' ? supplierId : null,
+    invoice_number: invoiceNumber,
+    product_id: productId,
+    quantity,
+    unit_price: productPrice,
+    total,
+    payment_type: normalizedPaymentType,
+    paid_amount: finalPaidAmount,
+    balance: finalBalance,
+    status: finalBalance > 0 ? 'PENDING' : 'PAID',
+    note,
+  };
 
-  if (invoiceError) {
-    alert(invoiceError.message);
+  let result;
+  if (editingInvoiceId) {
+    result = await supabaseClient.from('invoices').update(payload).eq('id', editingInvoiceId).select();
+  } else {
+    result = await supabaseClient.from('invoices').insert([payload]).select();
+  }
+
+  if (result.error) {
+    alert(result.error.message);
     return;
   }
 
-  const { error: stockError } = await supabaseClient
-    .from('products')
-    .update({ stock: newStock, measure: productData.measure || 'und' })
-    .eq('id', productId);
+  const invoiceResult = result.data && result.data[0] ? result.data[0] : null;
+  if (invoiceResult) {
+    if (!editingInvoiceId && normalizedPaymentType === 'TOTAL') {
+      await registerInvoicePayment(invoiceResult.id, invoiceResult.total, 'TOTAL');
+    }
 
-  if (stockError) {
-    alert('La factura se guardó, pero no se pudo actualizar el stock: ' + stockError.message);
-    return;
+    await recordAudit(editingInvoiceId ? 'update_invoice' : 'create_invoice', 'invoice', invoiceResult.id, { customerId, supplierId, invoiceNumber, total, type, paymentType: normalizedPaymentType, paidAmount: finalPaidAmount, balance: finalBalance });
   }
 
-  const { error: movementError } = await supabaseClient.from('inventory_movements').insert([
-    {
-      product_id: productId,
-      type: type === 'PURCHASE' ? 'ENTRY' : 'EXIT',
-      quantity,
-      measure: productData.measure || 'und',
-      note: `Factura ${invoiceNumber}`,
-    },
-  ]);
-
-  if (movementError) {
-    alert('La factura y el stock se actualizaron, pero falló el movimiento de inventario: ' + movementError.message);
-    return;
+  if (form) {
+    resetFormState(form);
   }
-
-  if (invoiceData && invoiceData[0]) {
-    await recordAudit('create_invoice', 'invoice', invoiceData[0].id, { customerId, supplierId, invoiceNumber, total, type });
+  if (form) {
+    delete form.dataset.editingInvoiceId;
   }
-
-  event.currentTarget.reset();
+  const submitButton = form?.querySelector('button[type="submit"]');
+  if (submitButton && form.id === 'invoiceForm') {
+    submitButton.textContent = 'Crear factura';
+  }
+  if (form.id !== 'invoiceForm') {
+    closeEditModal();
+  }
   await loadAllModules();
 }
 
@@ -1040,10 +1243,15 @@ async function saveUser(event) {
 
   const form = event.currentTarget;
   const id = form.dataset.editingId || null;
-  const name = document.getElementById('userName').value.trim();
-  const email = document.getElementById('userEmail').value.trim();
-  const password = document.getElementById('adminUserPassword').value;
-  const role = document.getElementById('userRole').value;
+  const nameField = getFormField(form, 'userName', 'userName');
+  const emailField = getFormField(form, 'userEmail', 'userEmail');
+  const passwordField = getFormField(form, 'adminUserPassword', 'adminUserPassword');
+  const roleField = getFormField(form, 'userRole', 'userRole');
+
+  const name = nameField?.value.trim();
+  const email = emailField?.value.trim();
+  const password = passwordField?.value || '';
+  const role = roleField?.value || 'VIEWER';
 
   if (!name || !email) {
     alert('Debes completar nombre y email.');
@@ -1102,10 +1310,14 @@ async function saveUser(event) {
     }
 
     await recordAudit('update_profile', 'profile', id, { full_name: name, email, role, passwordChanged: Boolean(password) });
-    form.reset();
+    resetFormState(form);
     delete form.dataset.editingId;
-    document.getElementById('userSubmitBtn').textContent = 'Guardar';
-    document.getElementById('adminUserPassword').required = true;
+    if (form.id !== 'userForm') {
+      closeEditModal();
+    } else {
+      document.getElementById('userSubmitBtn').textContent = 'Guardar';
+      document.getElementById('adminUserPassword').required = true;
+    }
     await loadAllModules();
     return;
   }
@@ -1133,7 +1345,7 @@ async function saveUser(event) {
   }
 
   await recordAudit('create_user', 'profile', authData.user.id, { name, email, role });
-  form.reset();
+  resetFormState(form);
   await loadAllModules();
 }
 
@@ -1194,54 +1406,283 @@ async function deleteRecord(type, id) {
   await loadAllModules();
 }
 
+function renderEditModal(title, html) {
+  const modal = document.getElementById('recordEditModal');
+  const titleNode = document.getElementById('recordEditTitle');
+  const body = document.getElementById('recordEditBody');
+  if (!modal || !titleNode || !body) return;
+
+  titleNode.textContent = title;
+  body.innerHTML = html;
+  modal.classList.remove('hidden');
+}
+
 async function startEditProduct(id) {
   const { data, error } = await supabaseClient.from('products').select('*').eq('id', id).single();
-  if (error) return;
+  if (error || !data) return;
 
-  document.getElementById('productName').value = data.name || '';
-  document.getElementById('productCode').value = data.code || '';
-  document.getElementById('productPrice').value = formatNumberInput(String(Number(data.price || 0)), true);
-  document.getElementById('productStock').value = formatNumberInput(String(Number(data.stock || 0)), false);
-  document.getElementById('productMeasure').value = data.measure || 'und';
-  document.getElementById('productSupplierId').value = data.supplier_id || '';
-  document.getElementById('productForm').dataset.editingId = id;
-  document.getElementById('productSubmitBtn').textContent = 'Actualizar';
-  await setActiveView('products');
+  const productSupplierOptions = await supabaseClient.from('suppliers').select('*');
+  const supplierOptionsHtml = (productSupplierOptions.data || []).map((supplier) => `<option value="${supplier.id}" ${supplier.id === data.supplier_id ? 'selected' : ''}>${supplier.name}</option>`).join('');
+
+  renderEditModal('Editar producto', `
+    <form id="editProductForm" class="edit-form" data-editing-id="${id}">
+      <div class="row-form">
+        <label>
+          <span>Nombre del producto</span>
+          <input type="text" id="productName" value="${(data.name || '').replace(/"/g, '&quot;')}" required />
+        </label>
+        <label>
+          <span>Precio de compra</span>
+          <input type="text" id="productPurchasePrice" value="${formatNumberInput(String(Number(data.purchase_price || 0)), false)}" required />
+        </label>
+        <label>
+          <span>Precio de venta</span>
+          <input type="text" id="productSalePrice" value="${formatNumberInput(String(Number(data.sale_price || 0)), false)}" required />
+        </label>
+        <label>
+          <span>Medida</span>
+          <input type="text" id="productMeasure" value="${(data.measure || 'und').replace(/"/g, '&quot;')}" required />
+        </label>
+        <label>
+          <span>Proveedor</span>
+          <select id="productSupplierId">
+            <option value="">Sin proveedor</option>
+            ${supplierOptionsHtml}
+          </select>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="primary-btn">Guardar cambios</button>
+      </div>
+    </form>
+  `);
+
+  const form = document.getElementById('editProductForm');
+  form?.addEventListener('submit', saveProduct);
+  applyFormattedNumberListener('productPurchasePrice', false, form);
+  applyFormattedNumberListener('productSalePrice', false, form);
 }
 
 async function startEditCustomer(id) {
   const { data, error } = await supabaseClient.from('customers').select('*').eq('id', id).single();
-  if (error) return;
+  if (error || !data) return;
 
-  document.getElementById('customerName').value = data.name || '';
-  document.getElementById('customerPhone').value = data.phone || '';
-  document.getElementById('customerEmail').value = data.email || '';
-  document.getElementById('customerForm').dataset.editingId = id;
-  document.getElementById('customerSubmitBtn').textContent = 'Actualizar';
+  renderEditModal('Editar cliente', `
+    <form id="editCustomerForm" class="edit-form" data-editing-id="${id}">
+      <div class="row-form">
+        <label>
+          <span>Nombre del cliente</span>
+          <input type="text" id="customerName" value="${(data.name || '').replace(/"/g, '&quot;')}" required />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="primary-btn">Guardar cambios</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById('editCustomerForm')?.addEventListener('submit', saveCustomer);
 }
 
 async function startEditSupplier(id) {
   const { data, error } = await supabaseClient.from('suppliers').select('*').eq('id', id).single();
-  if (error) return;
+  if (error || !data) return;
 
-  document.getElementById('supplierName').value = data.name || '';
-  document.getElementById('supplierPhone').value = data.phone || '';
-  document.getElementById('supplierEmail').value = data.email || '';
-  document.getElementById('supplierForm').dataset.editingId = id;
-  document.getElementById('supplierSubmitBtn').textContent = 'Actualizar';
+  renderEditModal('Editar proveedor', `
+    <form id="editSupplierForm" class="edit-form" data-editing-id="${id}">
+      <div class="row-form">
+        <label>
+          <span>Nombre del proveedor</span>
+          <input type="text" id="supplierName" value="${(data.name || '').replace(/"/g, '&quot;')}" required />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="primary-btn">Guardar cambios</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById('editSupplierForm')?.addEventListener('submit', saveSupplier);
 }
 
 async function startEditUser(id) {
   const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', id).single();
-  if (error) return;
+  if (error || !data) return;
 
-  document.getElementById('userName').value = data.full_name || '';
-  document.getElementById('userEmail').value = data.email || '';
-  document.getElementById('userRole').value = data.role || 'VIEWER';
-  document.getElementById('adminUserPassword').value = '';
-  document.getElementById('userForm').dataset.editingId = id;
-  document.getElementById('userSubmitBtn').textContent = 'Actualizar';
-  document.getElementById('adminUserPassword').required = false;
+  renderEditModal('Editar usuario', `
+    <form id="editUserForm" class="edit-form" data-editing-id="${id}">
+      <div class="row-form">
+        <label>
+          <span>Nombre completo</span>
+          <input type="text" id="userName" value="${(data.full_name || '').replace(/"/g, '&quot;')}" required />
+        </label>
+        <label>
+          <span>Email</span>
+          <input type="email" id="userEmail" value="${(data.email || '').replace(/"/g, '&quot;')}" required />
+        </label>
+        <label>
+          <span>Nueva contraseña</span>
+          <input type="password" id="adminUserPassword" placeholder="Opcional" />
+        </label>
+        <label>
+          <span>Rol</span>
+          <select id="userRole">
+            <option value="ADMIN" ${data.role === 'ADMIN' ? 'selected' : ''}>ADMIN</option>
+            <option value="OPERATIVE" ${data.role === 'OPERATIVE' ? 'selected' : ''}>OPERATIVE</option>
+            <option value="VIEWER" ${data.role === 'VIEWER' ? 'selected' : ''}>VIEWER</option>
+          </select>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="primary-btn">Guardar cambios</button>
+      </div>
+    </form>
+  `);
+
+  document.getElementById('editUserForm')?.addEventListener('submit', saveUser);
+}
+
+async function startEditInvoice(id) {
+  const { data, error } = await supabaseClient.from('invoices').select('*').eq('id', id).single();
+  if (error || !data) return;
+
+  const customers = await supabaseClient.from('customers').select('*');
+  const suppliers = await supabaseClient.from('suppliers').select('*');
+  const products = await supabaseClient.from('products').select('*');
+
+  const customerOptions = (customers.data || []).map((customer) => `<option value="${customer.id}" ${customer.id === data.customer_id ? 'selected' : ''}>${customer.name}</option>`).join('');
+  const supplierOptions = (suppliers.data || []).map((supplier) => `<option value="${supplier.id}" ${supplier.id === data.supplier_id ? 'selected' : ''}>${supplier.name}</option>`).join('');
+  const productOptions = (products.data || []).map((product) => `<option value="${product.id}" ${product.id === data.product_id ? 'selected' : ''}>${product.name}</option>`).join('');
+  const isPurchase = (data.type || 'SALE') === 'PURCHASE';
+
+  renderEditModal('Editar factura', `
+    <form id="editInvoiceForm" class="edit-form" data-editing-invoice-id="${id}">
+      <div class="row-form">
+        <label>
+          <span>Tipo de documento</span>
+          <select id="invoiceType">
+            <option value="SALE" ${data.type === 'SALE' ? 'selected' : ''}>Venta</option>
+            <option value="PURCHASE" ${data.type === 'PURCHASE' ? 'selected' : ''}>Compra</option>
+          </select>
+        </label>
+        <label id="invoiceCustomerField" ${isPurchase ? 'class="hidden"' : ''}>
+          <span>Cliente</span>
+          <select id="invoiceCustomerId" ${isPurchase ? 'class="hidden" disabled' : ''}>
+            <option value="">Seleccione cliente</option>
+            ${customerOptions}
+          </select>
+        </label>
+        <label id="invoiceSupplierField" ${!isPurchase ? 'class="hidden"' : ''}>
+          <span>Proveedor</span>
+          <select id="invoiceSupplierId" ${!isPurchase ? 'class="hidden" disabled' : ''}>
+            <option value="">Seleccione proveedor</option>
+            ${supplierOptions}
+          </select>
+        </label>
+        <label>
+          <span>Número de factura</span>
+          <input type="text" id="invoiceNumber" value="${(data.invoice_number || '').replace(/"/g, '&quot;')}" required />
+        </label>
+        <label>
+          <span>Producto</span>
+          <select id="invoiceProductId">
+            <option value="">Seleccione producto</option>
+            ${productOptions}
+          </select>
+        </label>
+        <label>
+          <span>Cantidad</span>
+          <input type="text" id="invoiceQty" value="${String(data.quantity ?? 0)}" inputmode="decimal" required />
+        </label>
+        <label>
+          <span>Precio unitario</span>
+          <input type="text" id="invoicePrice" value="${formatNumberInput(String(Number(data.unit_price || 0)), false)}" inputmode="decimal" required />
+        </label>
+        <label>
+          <span>Tipo de pago</span>
+          <select id="invoicePaymentType">
+            <option value="TOTAL" ${data.payment_type === 'TOTAL' ? 'selected' : ''}>Pago total</option>
+            <option value="ABONO" ${data.payment_type === 'ABONO' ? 'selected' : ''}>Abono</option>
+          </select>
+        </label>
+        <label>
+          <span>Observación</span>
+          <input type="text" id="invoiceNote" value="${(data.note || '').replace(/"/g, '&quot;')}" />
+        </label>
+      </div>
+      <div class="invoice-summary">
+        <span>Total estimado</span>
+        <strong id="invoiceTotalPreview">$0</strong>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="primary-btn">Guardar cambios</button>
+      </div>
+    </form>
+  `);
+
+  const form = document.getElementById('editInvoiceForm');
+  form?.addEventListener('submit', saveInvoice);
+  applyFormattedNumberListener('invoiceQty', false, form);
+  applyFormattedNumberListener('invoicePrice', false, form);
+  bindInvoiceEditModalBehavior(form);
+  syncInvoicePreview(form);
+}
+
+async function openInvoicePaymentHistory(invoiceId) {
+  const modal = document.getElementById('moduleHistoryModal');
+  const title = document.getElementById('moduleHistoryTitle');
+  const body = document.getElementById('moduleHistoryBody');
+
+  if (!modal || !title || !body) return;
+
+  title.textContent = 'Historial de abonos';
+  body.innerHTML = '<div class="empty-state">Cargando abonos...</div>';
+  modal.classList.remove('hidden');
+
+  try {
+    const { data: invoiceData, error: invoiceError } = await supabaseClient
+      .from('invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .single();
+
+    if (invoiceError || !invoiceData) {
+      body.innerHTML = '<div class="empty-state">No se pudo cargar la factura.</div>';
+      return;
+    }
+
+    const { data: payments, error: paymentsError } = await supabaseClient
+      .from('invoice_payments')
+      .select('*')
+      .eq('invoice_id', invoiceId)
+      .order('created_at', { ascending: false });
+
+    if (paymentsError) {
+      body.innerHTML = `<div class="empty-state">${paymentsError.message}</div>`;
+      return;
+    }
+
+    if (!payments || payments.length === 0) {
+      body.innerHTML = '<div class="empty-state">No hay abonos registrados para esta factura.</div>';
+      return;
+    }
+
+    body.innerHTML = payments.map((payment) => `
+      <div class="history-modal-item">
+        <div class="history-modal-head">
+          <strong>${payment.payment_type === 'TOTAL' ? 'Pago total' : 'Abono'}</strong>
+          <span>${formatDate(payment.created_at)}</span>
+        </div>
+        <div class="history-modal-body-text">
+          <span>Monto: ${formatMoney(payment.amount || 0)}</span>
+          <span>Factura: ${invoiceData.invoice_number || '-'}</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    console.error(error);
+    body.innerHTML = '<div class="empty-state">No se pudo cargar el historial de pagos.</div>';
+  }
 }
 
 function switchTab(tabName) {
@@ -1267,6 +1708,98 @@ function switchHistoryTab(tabName) {
   });
 }
 
+function syncInvoicePreview(form = document) {
+  const targetForm = form && form.querySelector ? form : document;
+  const qtyValue = parseFormattedNumber(targetForm.querySelector('#invoiceQty')?.value || targetForm.getElementById?.('invoiceQty')?.value || 0);
+  const unitPriceValue = parseFormattedNumber(targetForm.querySelector('#invoicePrice')?.value || targetForm.getElementById?.('invoicePrice')?.value || 0);
+  const preview = targetForm.querySelector('#invoiceTotalPreview') || document.getElementById('invoiceTotalPreview');
+
+  if (!preview) return;
+
+  const total = qtyValue * unitPriceValue;
+  preview.textContent = formatMoney(total);
+}
+
+function bindInvoiceEditModalBehavior(form) {
+  if (!form) return;
+
+  const typeField = form.querySelector('#invoiceType');
+  const customerField = form.querySelector('#invoiceCustomerField');
+  const supplierField = form.querySelector('#invoiceSupplierField');
+  const customerSelect = form.querySelector('#invoiceCustomerId');
+  const supplierSelect = form.querySelector('#invoiceSupplierId');
+  const productSelect = form.querySelector('#invoiceProductId');
+  const qtyField = form.querySelector('#invoiceQty');
+  const priceField = form.querySelector('#invoicePrice');
+  const originalProductId = productSelect?.value || '';
+  const originalPrice = priceField?.value || '';
+
+  const updateVisibility = async () => {
+    const isPurchase = typeField?.value === 'PURCHASE';
+
+    if (customerField) {
+      customerField.classList.toggle('hidden', isPurchase);
+    }
+    if (supplierField) {
+      supplierField.classList.toggle('hidden', !isPurchase);
+    }
+
+    if (customerSelect) {
+      customerSelect.disabled = isPurchase;
+      customerSelect.classList.toggle('hidden', isPurchase);
+    }
+
+    if (supplierSelect) {
+      supplierSelect.disabled = !isPurchase;
+      supplierSelect.classList.toggle('hidden', !isPurchase);
+    }
+
+    const productId = productSelect?.value;
+    if (productId) {
+      const { data } = await supabaseClient.from('products').select('*').eq('id', productId).single();
+      if (data) {
+        const isSameProduct = !originalProductId || originalProductId === productId;
+        const shouldKeepInvoicePrice = isSameProduct && !!originalPrice && parseFormattedNumber(originalPrice) > 0;
+
+        if (shouldKeepInvoicePrice && priceField && priceField.value !== originalPrice) {
+          priceField.value = originalPrice;
+        } else if (!priceField || !priceField.value || parseFormattedNumber(priceField.value) === 0) {
+          const defaultPrice = typeField?.value === 'PURCHASE' ? Number(data.purchase_price || 0) : Number(data.sale_price || 0);
+          priceField.value = formatNumberInput(String(defaultPrice), false);
+        }
+
+        syncInvoicePreview(form);
+      }
+    }
+  };
+
+  typeField?.addEventListener('change', updateVisibility);
+  productSelect?.addEventListener('change', async (event) => {
+    const productId = event.target.value;
+    if (!productId) return;
+
+    const { data } = await supabaseClient.from('products').select('*').eq('id', productId).single();
+    if (!data) return;
+
+    const isChangingProduct = originalProductId && originalProductId !== productId;
+    const defaultPrice = typeField?.value === 'PURCHASE' ? Number(data.purchase_price || 0) : Number(data.sale_price || 0);
+
+    if (priceField) {
+      if (!isChangingProduct && originalPrice && parseFormattedNumber(originalPrice) > 0) {
+        priceField.value = originalPrice;
+      } else {
+        priceField.value = formatNumberInput(String(defaultPrice), false);
+      }
+    }
+    syncInvoicePreview(form);
+  });
+
+  qtyField?.addEventListener('input', () => syncInvoicePreview(form));
+  priceField?.addEventListener('input', () => syncInvoicePreview(form));
+
+  updateVisibility();
+}
+
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
 });
@@ -1275,15 +1808,28 @@ document.querySelectorAll('.history-tab').forEach((tab) => {
   tab.addEventListener('click', () => switchHistoryTab(tab.dataset.history));
 });
 
-document.getElementById('historyFilter')?.addEventListener('change', async () => {
+document.getElementById('historyTypeFilter')?.addEventListener('change', async () => {
   await loadHistory();
 });
 
-document.getElementById('inventoryHistoryBtn')?.addEventListener('click', () => openModuleHistory('inventory'));
+document.getElementById('historyPaymentFilter')?.addEventListener('change', async () => {
+  await loadHistory();
+});
+
 document.getElementById('invoiceHistoryBtn')?.addEventListener('click', () => openModuleHistory('invoice'));
 document.getElementById('closeModuleHistory')?.addEventListener('click', () => {
   const modal = document.getElementById('moduleHistoryModal');
   if (modal) modal.classList.add('hidden');
+});
+
+document.getElementById('closeRecordEditModal')?.addEventListener('click', () => {
+  closeEditModal();
+});
+
+document.getElementById('recordEditModal')?.addEventListener('click', (event) => {
+  if (event.target && event.target.id === 'recordEditModal') {
+    closeEditModal();
+  }
 });
 
 document.getElementById('moduleHistoryModal')?.addEventListener('click', (event) => {
@@ -1315,34 +1861,37 @@ document.querySelectorAll('.nav-item').forEach((button) => {
   });
 });
 
-applyFormattedNumberListener('productPrice', false);
-applyFormattedNumberListener('productStock', false);
-applyFormattedNumberListener('inventoryQty', false);
+applyFormattedNumberListener('productPurchasePrice', false);
+applyFormattedNumberListener('productSalePrice', false);
 applyFormattedNumberListener('invoiceQty', false);
 applyFormattedNumberListener('invoicePrice', false);
 
-document.getElementById('inventoryProductId').addEventListener('change', async (event) => {
-  const productId = event.target.value;
-  if (!productId) {
-    document.getElementById('inventoryMeasure').value = '';
-    return;
-  }
-
-  const { data, error } = await supabaseClient
-    .from('products')
-    .select('measure')
-    .eq('id', productId)
-    .single();
-
-  if (!error && data) {
-    document.getElementById('inventoryMeasure').value = data.measure || 'und';
+['invoiceQty', 'invoicePrice'].forEach((id) => {
+  const element = document.getElementById(id);
+  if (element) {
+    element.addEventListener('input', syncInvoicePreview);
   }
 });
 
-document.getElementById('invoiceType').addEventListener('change', (event) => {
+const invoicePaymentType = document.getElementById('invoicePaymentType');
+if (invoicePaymentType) {
+  invoicePaymentType.value = 'TOTAL';
+}
+
+async function refreshInvoiceFormDefaults() {
+  await syncInvoiceNumber();
+  if (invoicePaymentType) {
+    invoicePaymentType.value = 'TOTAL';
+  }
+}
+
+document.getElementById('invoiceType').addEventListener('change', async (event) => {
   const isPurchase = event.target.value === 'PURCHASE';
   const customerSelect = document.getElementById('invoiceCustomerId');
   const supplierSelect = document.getElementById('invoiceSupplierId');
+  const productId = document.getElementById('invoiceProductId').value;
+
+  await syncInvoiceNumber();
 
   if (customerSelect) {
     customerSelect.classList.toggle('hidden', isPurchase);
@@ -1353,13 +1902,38 @@ document.getElementById('invoiceType').addEventListener('change', (event) => {
     supplierSelect.classList.toggle('hidden', !isPurchase);
     supplierSelect.disabled = !isPurchase;
   }
+
+  if (productId) {
+    const { data } = await supabaseClient.from('products').select('*').eq('id', productId).single();
+    if (data) {
+      const defaultPrice = isPurchase ? Number(data.purchase_price || 0) : Number(data.sale_price || 0);
+      document.getElementById('invoicePrice').value = formatNumberInput(String(defaultPrice), false);
+      syncInvoicePreview();
+    }
+  }
 });
+
+const invoiceProduct = document.getElementById('invoiceProductId');
+if (invoiceProduct) {
+  invoiceProduct.addEventListener('change', async (event) => {
+    const productId = event.target.value;
+    if (!productId) return;
+
+    const { data } = await supabaseClient.from('products').select('*').eq('id', productId).single();
+    if (!data) return;
+
+    const type = document.getElementById('invoiceType').value || 'SALE';
+    const defaultPrice = type === 'PURCHASE' ? Number(data.purchase_price || 0) : Number(data.sale_price || 0);
+    document.getElementById('invoicePrice').value = formatNumberInput(String(defaultPrice), false);
+    syncInvoicePreview();
+  });
+}
 
 document.getElementById('productForm').addEventListener('submit', saveProduct);
 document.getElementById('customerForm').addEventListener('submit', saveCustomer);
 document.getElementById('supplierForm').addEventListener('submit', saveSupplier);
-document.getElementById('inventoryForm').addEventListener('submit', saveInventoryMovement);
 document.getElementById('invoiceForm').addEventListener('submit', saveInvoice);
+refreshInvoiceFormDefaults();
 document.getElementById('userForm').addEventListener('submit', saveUser);
 
 document.addEventListener('click', async (event) => {
@@ -1370,7 +1944,14 @@ document.addEventListener('click', async (event) => {
     if (type === 'edit-customer') await startEditCustomer(id);
     if (type === 'edit-supplier') await startEditSupplier(id);
     if (type === 'edit-user') await startEditUser(id);
+    if (type === 'edit-invoice') await startEditInvoice(id);
     if (type === 'reset-user-password') await resetPasswordForUser(id);
+    if (type === 'view-invoice-payments') await openInvoicePaymentHistory(id);
+    if (type === 'add-invoice-abono') {
+      const invoice = (await supabaseClient.from('invoices').select('*').eq('id', id).single()).data;
+      if (!invoice) return;
+      await applyInvoiceAbono(invoice.id, Number(invoice.total || 0), Number(invoice.paid_amount || 0), Number(invoice.balance || 0));
+    }
     return;
   }
 

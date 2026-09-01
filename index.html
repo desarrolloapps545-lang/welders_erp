@@ -69,7 +69,6 @@
           <button class="nav-item" data-view="products">Productos</button>
           <button class="nav-item" data-view="customers">Clientes</button>
           <button class="nav-item" data-view="suppliers">Proveedores</button>
-          <button class="nav-item" data-view="inventory">Inventario</button>
           <button class="nav-item" data-view="invoices">Facturación</button>
           <button class="nav-item" data-view="history">Historial</button>
           <button class="nav-item" data-view="users">Usuarios</button>
@@ -92,20 +91,32 @@
         <section id="dashboardView" class="view active-view">
           <div class="stats-grid">
             <article class="stat-card">
-              <span>Total productos</span>
+              <span>Productos</span>
               <strong id="productsTotal">0</strong>
             </article>
             <article class="stat-card warning">
-              <span>Clientes</span>
-              <strong id="customersTotal">0</strong>
+              <span>Pagos pendientes</span>
+              <strong id="customerPaymentsTotal">$0</strong>
             </article>
             <article class="stat-card success">
-              <span>Proveedores</span>
-              <strong id="suppliersTotal">0</strong>
+              <span>Pagos proveedores</span>
+              <strong id="supplierPaymentsTotal">$0</strong>
             </article>
             <article class="stat-card accent">
-              <span>Usuarios</span>
-              <strong id="usersTotal">0</strong>
+              <span>Saldo neto</span>
+              <strong id="netBalanceTotal">$0</strong>
+            </article>
+          </div>
+
+          <div class="debt-lists">
+            <article class="panel debt-card">
+              <h3>Deudas pendientes por cobrar a clientes</h3>
+              <ul id="customerDebtList" class="debt-list"></ul>
+            </article>
+
+            <article class="panel debt-card">
+              <h3>Deudas pendientes por pagar a proveedores</h3>
+              <ul id="supplierDebtList" class="debt-list"></ul>
             </article>
           </div>
         </section>
@@ -115,9 +126,8 @@
             <h3>Productos</h3>
             <form id="productForm" class="row-form">
               <input type="text" id="productName" placeholder="Nombre del producto" required />
-              <input type="text" id="productCode" placeholder="Código" required />
-              <input type="text" id="productPrice" placeholder="Precio" inputmode="decimal" required />
-              <input type="text" id="productStock" placeholder="Stock" inputmode="numeric" required />
+              <input type="text" id="productPurchasePrice" placeholder="Precio de compra" inputmode="decimal" required />
+              <input type="text" id="productSalePrice" placeholder="Precio de venta" inputmode="decimal" required />
               <input type="text" id="productMeasure" placeholder="Medida (gal, kg, caja, und)" required />
               <select id="productSupplierId">
                 <option value="">Sin proveedor</option>
@@ -130,11 +140,10 @@
             <table>
               <thead>
                 <tr>
-                  <th>Código</th>
                   <th>Nombre</th>
                   <th>Medida</th>
-                  <th>Precio</th>
-                  <th>Stock</th>
+                  <th>Compra</th>
+                  <th>Venta</th>
                   <th>Proveedor</th>
                   <th>Acciones</th>
                 </tr>
@@ -149,8 +158,6 @@
             <h3>Clientes</h3>
             <form id="customerForm" class="row-form">
               <input type="text" id="customerName" placeholder="Nombre del cliente" required />
-              <input type="text" id="customerPhone" placeholder="Teléfono" />
-              <input type="email" id="customerEmail" placeholder="Email" />
               <button type="submit" id="customerSubmitBtn" class="primary-btn">Guardar</button>
             </form>
           </div>
@@ -160,8 +167,6 @@
               <thead>
                 <tr>
                   <th>Nombre</th>
-                  <th>Teléfono</th>
-                  <th>Email</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
@@ -175,8 +180,6 @@
             <h3>Proveedores</h3>
             <form id="supplierForm" class="row-form">
               <input type="text" id="supplierName" placeholder="Nombre del proveedor" required />
-              <input type="text" id="supplierPhone" placeholder="Teléfono" />
-              <input type="email" id="supplierEmail" placeholder="Email" />
               <button type="submit" id="supplierSubmitBtn" class="primary-btn">Guardar</button>
             </form>
           </div>
@@ -186,49 +189,10 @@
               <thead>
                 <tr>
                   <th>Nombre</th>
-                  <th>Teléfono</th>
-                  <th>Email</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
               <tbody id="suppliersTableBody"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section id="inventoryView" class="view">
-          <div class="panel">
-            <div class="toolbar-row">
-              <h3>Movimiento de inventario</h3>
-              <button type="button" id="inventoryHistoryBtn" class="secondary-btn">Ver historial</button>
-            </div>
-            <form id="inventoryForm" class="row-form">
-              <select id="inventoryType">
-                <option value="ENTRY">Entrada</option>
-                <option value="EXIT">Salida</option>
-                <option value="ADJUSTMENT">Ajuste</option>
-              </select>
-              <select id="inventoryProductId"></select>
-              <input type="text" id="inventoryQty" placeholder="Cantidad" inputmode="decimal" required />
-              <input type="text" id="inventoryMeasure" placeholder="Medida (gal, kg, caja)" readonly />
-              <input type="text" id="inventoryNote" placeholder="Nota" />
-              <button type="submit" class="primary-btn">Guardar movimiento</button>
-            </form>
-          </div>
-
-          <div class="panel table-panel">
-            <table>
-              <thead>
-                <tr>
-                  <th>Tipo</th>
-                  <th>Producto</th>
-                  <th>Cantidad</th>
-                  <th>Medida</th>
-                  <th>Nota</th>
-                  <th>Fecha</th>
-                </tr>
-              </thead>
-              <tbody id="inventoryTableBody"></tbody>
             </table>
           </div>
         </section>
@@ -250,7 +214,15 @@
               <select id="invoiceProductId"></select>
               <input type="text" id="invoiceQty" placeholder="Cantidad" inputmode="decimal" required />
               <input type="text" id="invoicePrice" placeholder="Precio unitario" inputmode="decimal" required />
+              <select id="invoicePaymentType">
+                <option value="TOTAL">Pago total</option>
+                <option value="ABONO">Abono</option>
+              </select>
               <input type="text" id="invoiceNote" placeholder="Observación" />
+              <div class="invoice-summary">
+                <span>Total estimado</span>
+                <strong id="invoiceTotalPreview">$0</strong>
+              </div>
               <button type="submit" class="primary-btn">Crear factura</button>
             </form>
           </div>
@@ -260,11 +232,14 @@
               <thead>
                 <tr>
                   <th>Factura</th>
-                  <th>Cliente</th>
+                  <th>Tipo</th>
+                  <th>Cliente/Proveedor</th>
                   <th>Producto</th>
                   <th>Cantidad</th>
                   <th>Total</th>
+                  <th>Tipo de pago</th>
                   <th>Fecha</th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody id="invoicesTableBody"></tbody>
@@ -279,11 +254,18 @@
                 <button class="history-tab active" data-history="general">General</button>
                 <button class="history-tab" data-history="personal">Mi historial</button>
               </div>
-              <select id="historyFilter" class="history-filter-select">
-                <option value="all">Todo</option>
-                <option value="inventory">Solo inventario</option>
-                <option value="invoice">Solo facturación</option>
-              </select>
+              <div class="history-filters">
+                <select id="historyTypeFilter" class="history-filter-select">
+                  <option value="all">Todo</option>
+                  <option value="SALE">Solo ventas</option>
+                  <option value="PURCHASE">Solo compras</option>
+                </select>
+                <select id="historyPaymentFilter" class="history-filter-select">
+                  <option value="all">Todo</option>
+                  <option value="TOTAL">Pagadas totalmente</option>
+                  <option value="ABONO">Pagadas en abono</option>
+                </select>
+              </div>
             </div>
             <div id="historyGeneral" class="history-table active-history">
               <table>
@@ -327,6 +309,16 @@
               <button type="button" id="closeModuleHistory" class="secondary-btn">Cerrar</button>
             </div>
             <div id="moduleHistoryBody" class="history-modal-list"></div>
+          </div>
+        </div>
+
+        <div id="recordEditModal" class="modal hidden">
+          <div class="modal-content modal-content-small">
+            <div class="modal-header">
+              <h3 id="recordEditTitle">Editar registro</h3>
+              <button type="button" id="closeRecordEditModal" class="secondary-btn">Cerrar</button>
+            </div>
+            <div id="recordEditBody"></div>
           </div>
         </div>
 
