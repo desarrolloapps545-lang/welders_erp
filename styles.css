@@ -275,6 +275,34 @@ button, input, select {
   margin-top: 12px;
 }
 
+.chart-panel {
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+  margin-bottom: 22px;
+  box-shadow: var(--shadow);
+}
+
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.chart-header h3 {
+  margin: 0;
+}
+
+.chart-container {
+  position: relative;
+  height: 360px;
+  width: 100%;
+}
+
 .debt-card {
   min-height: 220px;
 }
@@ -330,44 +358,85 @@ button, input, select {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  width: 100%;
 }
 
-.debt-list li {
+.debt-list li.debt-header,
+.debt-list li.debt-row {
   display: grid;
-  grid-template-columns: 1.1fr 1fr 1fr 1.4fr 1.5fr 1fr 1fr 1.1fr auto;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 4px;
+  padding: 5px 6px;
   border: 1px solid var(--border);
   border-radius: 10px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.debt-list li.debt-header {
+  background: rgba(30, 41, 59, 0.95);
+  font-weight: 600;
+}
+
+.debt-list li.debt-row {
   background: rgba(15, 23, 42, 0.4);
 }
 
-.debt-list .debt-row {
+.debt-list li.debt-row > div,
+.debt-list li.debt-header > div {
   min-width: 0;
+  text-align: center;
 }
 
-.debt-list .debt-cell {
-  min-width: 0;
+.debt-list li.debt-header > div {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.debt-list li.debt-row > div {
+  font-size: 0.75rem;
+  line-height: 1.3;
   color: #e5e7eb;
-  font-size: 0.85rem;
-  line-height: 1.4;
   word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#accountsReceivableList li.debt-header,
+#accountsReceivableList li.debt-row,
+#accountsPayableList li.debt-header,
+#accountsPayableList li.debt-row {
+  grid-template-columns: 1.1fr 1fr 1fr 1.4fr 1.5fr 1fr 1fr 1.1fr 1fr;
+}
+
+#paymentsList li.debt-header,
+#paymentsList li.debt-row {
+  grid-template-columns: 1.1fr 1fr 1fr 1.4fr 1.5fr 1fr 1fr 1fr 1.1fr 1fr;
+}
+
+.debt-list .debt-amount {
+  font-weight: 700;
+  color: var(--warning);
+  text-align: center;
 }
 
 .debt-list .debt-actions {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 2px;
   flex-wrap: wrap;
+  min-width: 0;
+  overflow: hidden;
 }
 
-.debt-list .debt-amount {
-  font-weight: 700;
-  color: var(--warning);
-  text-align: right;
+.debt-list .debt-actions button {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .debt-list .empty-item {
@@ -397,6 +466,7 @@ button, input, select {
 .stat-card.warning strong { color: var(--warning); }
 .stat-card.success strong { color: var(--success); }
 .stat-card.accent strong { color: #a78bfa; }
+.stat-card.danger strong { color: #fca5a5; }
 
 .panel {
   background: rgba(15, 23, 42, 0.72);
@@ -535,6 +605,8 @@ button, input, select {
 .secondary-action-btn {
   background: rgba(59, 130, 246, 0.12);
   border-color: rgba(59, 130, 246, 0.45);
+  padding: 3px 5px;
+  font-size: 0.64rem;
 }
 
 .table-panel td:last-child {

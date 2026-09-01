@@ -72,6 +72,7 @@
           <button class="nav-item" data-view="invoices">Facturación</button>
           <button class="nav-item" data-view="receivables">Cuentas por cobrar</button>
           <button class="nav-item" data-view="payables">Cuentas por pagar</button>
+          <button class="nav-item" data-view="payments">Pagos/Abonos</button>
           <button class="nav-item" data-view="history">Historial</button>
           <button class="nav-item" data-view="users">Usuarios</button>
         </nav>
@@ -104,10 +105,20 @@
               <span>Utilidad bruta</span>
               <strong id="supplierPaymentsTotal">$0</strong>
             </article>
-            <article class="stat-card accent">
-              <span>Resultado</span>
-              <strong id="netBalanceTotal">$0</strong>
+            <article class="stat-card danger">
+              <span>Por pagar</span>
+              <strong id="payablesTotal">$0</strong>
             </article>
+          </div>
+
+          <div class="chart-panel">
+            <div class="chart-header">
+              <h3>Compras vs Ventas por mes</h3>
+              <select id="chartYearFilter" class="history-filter-select"></select>
+            </div>
+            <div class="chart-container">
+              <canvas id="purchasesSalesChart"></canvas>
+            </div>
           </div>
 
           <div class="debt-lists">
@@ -145,6 +156,23 @@
               </div>
             </div>
             <ul id="accountsPayableList" class="debt-list"></ul>
+          </div>
+        </section>
+
+        <section id="paymentsView" class="view">
+          <div class="panel">
+            <div class="accounts-header">
+              <h3>Pagos / Abonos</h3>
+              <div class="accounts-filters">
+                <input id="paymentSearch" type="text" placeholder="Buscar factura o id de operación" />
+                <select id="paymentOperationFilter" class="history-filter-select">
+                  <option value="all">Todas</option>
+                  <option value="DESPACHO">Despacho</option>
+                  <option value="REMISION">Remisión</option>
+                </select>
+              </div>
+            </div>
+            <ul id="paymentsList" class="debt-list"></ul>
           </div>
         </section>
 
@@ -249,7 +277,7 @@
                 <option value="DESPACHO">Despacho</option>
                 <option value="REMISION">Remisión</option>
               </select>
-              <input type="text" id="invoiceInitialPayment" class="hidden" placeholder="Abono inicial" inputmode="decimal" />
+              <input type="text" id="invoiceInitialPayment" class="hidden" placeholder="Ej: 1.000.000" inputmode="decimal" />
               <input type="text" id="invoiceNote" placeholder="Observación" />
               <div class="invoice-summary">
                 <span>Total estimado</span>
@@ -400,6 +428,7 @@
       </main>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./app.js"></script>
   </body>
