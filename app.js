@@ -83,7 +83,7 @@ function resetFormState(form) {
 
   if (form.id === 'invoiceForm') {
     const invoiceType = document.getElementById('invoiceType');
-    const operationType = document.getElementById('invoiceOperationType');
+    const operationReference = document.getElementById('invoiceOperationReference');
     const customerSelect = document.getElementById('invoiceCustomerId');
     const supplierSelect = document.getElementById('invoiceSupplierId');
     const paymentType = document.getElementById('invoicePaymentType');
@@ -91,9 +91,9 @@ function resetFormState(form) {
     const preview = document.getElementById('invoiceTotalPreview');
 
     if (invoiceType) invoiceType.value = 'SALE';
-    if (operationType) {
-      operationType.value = 'DESPACHO';
-      operationType.disabled = true;
+    if (operationReference) {
+      operationReference.value = '';
+      operationReference.placeholder = 'Referencia';
     }
     if (customerSelect) {
       customerSelect.disabled = false;
@@ -110,6 +110,7 @@ function resetFormState(form) {
       initialPayment.disabled = true;
     }
     if (preview) preview.textContent = formatMoney(0);
+    syncInvoiceNumber();
   }
 
   if (form.id === 'userForm') {
@@ -189,33 +190,35 @@ function getTypeLabel(type) {
 }
 
 function getInvoiceOperationValue(invoice) {
-  const rawValue = invoice?.operation_type || invoice?.operationType || invoice?.operation || invoice?.note || '';
-  const normalized = String(rawValue).trim().toUpperCase();
-
-  if (!normalized) return 'SIN_TIPO';
-  if (normalized.includes('REM')) return 'REMISION';
-  if (normalized.includes('DESP')) return 'DESPACHO';
-  return normalized;
+  if (!invoice) return 'SIN_TIPO';
+  const type = invoice.type || invoice.kind || 'SALE';
+  const raw = invoice.operation_reference || invoice.operation_type || invoice.operationType || invoice.operation || '';
+  const normalized = String(raw).trim().toUpperCase();
+  if (!normalized) return type;
+  if (type === 'PURCHASE') return 'PURCHASE';
+  return 'SALE';
 }
 
 function getInvoiceOperationLabel(invoice) {
-  const value = getInvoiceOperationValue(invoice);
-  const map = {
-    DESPACHO: 'Despacho',
-    REMISION: 'Remisión',
-    SIN_TIPO: 'Sin tipo',
-  };
+  if (!invoice) return 'Sin tipo';
+  const type = invoice.type || invoice.kind || 'SALE';
+  const raw = invoice.operation_reference || invoice.operation_type || invoice.operationType || invoice.operation || '';
+  const normalized = String(raw).trim();
 
-  return map[value] || 'Sin tipo';
+  if (!normalized) return type === 'PURCHASE' ? 'Compra' : 'Venta';
+
+  const upper = normalized.toUpperCase();
+  if (type === 'PURCHASE') {
+    return upper.includes('REC') || upper.includes('RECIBIDO') ? 'Compra' : 'Compra';
+  }
+  return upper.includes('REM') || upper.includes('REMISION') || upper.includes('REMISIÓN') ? 'Venta' : 'Venta';
 }
 
 function getInvoiceOperationId(invoice) {
   if (!invoice) return '';
-
-  const rawId = invoice.operation_id ?? invoice.operationTypeId ?? invoice.operation_type_id ?? invoice.operationId ?? invoice.id_operacion ?? '';
-  if (rawId === null || rawId === undefined || rawId === '') return '';
-
-  return String(rawId).trim();
+  const raw = invoice.operation_reference || invoice.operation_id || invoice.operationTypeId || invoice.operation_type_id || invoice.operationId || invoice.id_operacion || '';
+  if (raw === null || raw === undefined || raw === '') return '';
+  return String(raw).trim();
 }
 
 function formatDate(value) {
@@ -555,17 +558,17 @@ async function loadDashboard() {
   const customerMap = new Map((customersResult.data || []).map((customer) => [customer.id, customer]));
   const supplierMap = new Map((suppliersResult.data || []).map((supplier) => [supplier.id, supplier]));
 
-  const salesTotal = invoices.filter((invoice) => invoice.type === 'SALE').reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
-  const purchasesTotal = invoices.filter((invoice) => invoice.type === 'PURCHASE').reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
-  const pendingCustomerDebt = invoices.filter((invoice) => invoice.type === 'SALE' && Number(invoice.balance || 0) > 0).reduce((sum, invoice) => sum + Number(invoice.balance || 0), 0);
-  const pendingSupplierDebt = invoices.filter((invoice) => invoice.type === 'PURCHASE' && Number(invoice.balance || 0) > 0).reduce((sum, invoice) => sum + Number(invoice.balance || 0), 0);
+  const salesTotal = invoices.filter((invoice) => (invoice.type || getInvoiceOperationValue(invoice)) === 'SALE').reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
+  const purchasesTotal = invoices.filter((invoice) => (invoice.type || getInvoiceOperationValue(invoice)) === 'PURCHASE').reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
+  const pendingCustomerDebt = invoices.filter((invoice) => (invoice.type || getInvoiceOperationValue(invoice)) === 'SALE' && Number(invoice.balance || 0) > 0).reduce((sum, invoice) => sum + Number(invoice.balance || 0), 0);
+  const pendingSupplierDebt = invoices.filter((invoice) => (invoice.type || getInvoiceOperationValue(invoice)) === 'PURCHASE' && Number(invoice.balance || 0) > 0).reduce((sum, invoice) => sum + Number(invoice.balance || 0), 0);
   const grossProfit = salesTotal - purchasesTotal;
 
   const customerDebtList = document.getElementById('customerDebtList');
   const supplierDebtList = document.getElementById('supplierDebtList');
 
   customerDebtList.innerHTML = invoices
-    .filter((invoice) => invoice.type === 'SALE' && Number(invoice.balance || 0) > 0)
+    .filter((invoice) => (invoice.type || getInvoiceOperationValue(invoice)) === 'SALE' && Number(invoice.balance || 0) > 0)
     .map((invoice) => {
       const customerName = customerMap.get(invoice.customer_id)?.name || 'Cliente';
       return `
@@ -581,7 +584,7 @@ async function loadDashboard() {
     .join('') || '<li class="empty-item">No hay deudas pendientes.</li>';
 
   supplierDebtList.innerHTML = invoices
-    .filter((invoice) => invoice.type === 'PURCHASE' && Number(invoice.balance || 0) > 0)
+    .filter((invoice) => (invoice.type || getInvoiceOperationValue(invoice)) === 'PURCHASE' && Number(invoice.balance || 0) > 0)
     .map((invoice) => {
       const supplierName = supplierMap.get(invoice.supplier_id)?.name || 'Proveedor';
       return `
@@ -673,7 +676,6 @@ async function loadPayments() {
   list.innerHTML = rows.length
     ? `<li class="debt-header">
         <div>Factura</div>
-        <div>ID operación</div>
         <div>Tipo</div>
         <div>Cliente/Proveedor</div>
         <div>Producto</div>
@@ -685,7 +687,6 @@ async function loadPayments() {
       </li>` + rows.map((row) => `
         <li class="debt-row">
           <div class="debt-cell">${row.invoiceNumber}</div>
-          <div class="debt-cell">${row.operationId || '-'}</div>
           <div class="debt-cell">${row.operationLabel}</div>
           <div class="debt-cell">${row.partyName}</div>
           <div class="debt-cell">${row.productName}</div>
@@ -694,8 +695,8 @@ async function loadPayments() {
           <div class="debt-cell debt-amount">${formatMoney(row.paid)}</div>
           <div class="debt-cell debt-amount">${formatMoney(row.balance)}</div>
           <div class="debt-cell debt-actions">
-            <button class="secondary-action-btn" data-id="${row.id}" data-type="pay-invoice-total">Pagar</button>
-            <button class="secondary-action-btn" data-id="${row.id}" data-type="add-invoice-abono">Abonar</button>
+            <button class="secondary-action-btn" data-id="${row.id}" data-type="open-payment-total">Pagar</button>
+            <button class="secondary-action-btn" data-id="${row.id}" data-type="open-payment-abono">Abonar</button>
           </div>
         </li>
       `).join('')
@@ -741,7 +742,6 @@ async function loadAccountsReceivable() {
   receivableBody.innerHTML = rows.length
     ? `<li class="debt-header">
         <div>Factura</div>
-        <div>ID operación</div>
         <div>Tipo</div>
         <div>Cliente</div>
         <div>Producto</div>
@@ -752,7 +752,6 @@ async function loadAccountsReceivable() {
       </li>` + rows.map((row) => `
         <li class="debt-row">
           <div class="debt-cell">${row.invoice_number || '-'}</div>
-          <div class="debt-cell">${row.operation_id || '-'}</div>
           <div class="debt-cell">${row.operation || '-'}</div>
           <div class="debt-cell">${row.name}</div>
           <div class="debt-cell">${row.productName}</div>
@@ -806,7 +805,6 @@ async function loadAccountsPayable() {
   payableBody.innerHTML = rows.length
     ? `<li class="debt-header">
         <div>Factura</div>
-        <div>ID operación</div>
         <div>Tipo</div>
         <div>Proveedor</div>
         <div>Producto</div>
@@ -817,7 +815,6 @@ async function loadAccountsPayable() {
       </li>` + rows.map((row) => `
         <li class="debt-row">
           <div class="debt-cell">${row.invoice_number || '-'}</div>
-          <div class="debt-cell">${row.operation_id || '-'}</div>
           <div class="debt-cell">${row.operation || '-'}</div>
           <div class="debt-cell">${row.name}</div>
           <div class="debt-cell">${row.productName}</div>
@@ -1117,11 +1114,12 @@ async function loadInvoices() {
   }
 
   const invoiceSearch = document.getElementById('invoiceListSearch');
+  const operationFilter = document.getElementById('invoiceOperationFilter')?.value || 'all';
   const tbody = document.getElementById('invoicesTableBody');
   tbody.innerHTML = '';
 
   if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No hay facturas.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No hay facturas.</td></tr>';
     return;
   }
 
@@ -1155,13 +1153,14 @@ async function loadInvoices() {
         operationId,
         totalDisplay,
         paymentTypeLabel,
-        search: `${invoice.invoice_number || ''} ${operationId} ${operationLabel}`.toLowerCase(),
+        search: `${invoice.invoice_number || ''} ${invoice.operation_reference || ''} ${operationLabel}`.toLowerCase(),
       };
     })
     .filter((row) => {
       const searchTerm = (invoiceSearch?.value || '').trim().toLowerCase();
       const matchesSearch = !searchTerm || row.search.includes(searchTerm);
-      return matchesSearch;
+      const matchesType = operationFilter === 'all' || row.type === operationFilter;
+      return matchesSearch && matchesType;
     });
 
   if (!rows.length) {
@@ -1169,12 +1168,12 @@ async function loadInvoices() {
     return;
   }
 
-  rows.forEach(({ invoice, partyName, product, operationLabel, operationId, totalDisplay, paymentTypeLabel }) => {
+  rows.forEach(({ invoice, partyName, product, operationLabel, totalDisplay, paymentTypeLabel }) => {
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${invoice.invoice_number || '-'}</td>
-      <td>${operationId || '-'}</td>
       <td>${operationLabel}</td>
+      <td>${invoice.operation_reference || '-'}</td>
       <td>${partyName}</td>
       <td>${product ? product.name : '-'}</td>
       <td>${invoice.quantity ?? 0}</td>
@@ -1183,37 +1182,24 @@ async function loadInvoices() {
       <td>${formatDate(invoice.created_at)}</td>
       <td>
         <button class="secondary-action-btn" data-id="${invoice.id}" data-type="edit-invoice">Editar</button>
+        <button class="action-btn" data-id="${invoice.id}" data-type="delete-invoice">Eliminar</button>
       </td>
     `;
     tbody.appendChild(row);
   });
 }
 
-async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBalance) {
-  if (!invoiceId) return;
+async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBalance, amount) {
+  if (!invoiceId || !Number.isFinite(amount) || amount <= 0) return;
 
   const remainingBalance = Number(currentBalance || 0);
-  if (remainingBalance <= 0) {
-    alert('Esta factura ya está totalmente pagada.');
-    return;
-  }
-
-  const amountPrompt = window.prompt('Ingrese el valor del abono adicional (ej: 1.000.000):', '0');
-  if (amountPrompt === null) return;
-
-  const amount = Number(String(amountPrompt).replace(/\./g, '').replace(',', '.').trim());
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert('El abono debe ser mayor a cero.');
-    return;
-  }
-
   if (amount > remainingBalance) {
     alert(`El abono no puede superar el saldo pendiente de ${formatMoney(remainingBalance)}.`);
     return;
   }
 
   const nextPaid = Number(currentPaid || 0) + amount;
-  const nextBalance = Number(currentTotal || 0) - nextPaid;
+  const nextBalance = Math.max(currentTotal - nextPaid, 0);
 
   const { error } = await supabaseClient
     .from('invoices')
@@ -1221,7 +1207,6 @@ async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBa
       paid_amount: nextPaid,
       balance: nextBalance,
       status: nextBalance > 0 ? 'PENDING' : 'PAID',
-      payment_type: 'ABONO',
     })
     .eq('id', invoiceId);
 
@@ -1249,8 +1234,128 @@ async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBa
   ]);
 }
 
-async function applyTotalPayment(invoiceId) {
+let currentPaymentInvoiceId = null;
+let currentPaymentMode = 'total';
+let currentEditingPaymentId = null;
+
+function openPaymentModal(invoiceId, mode, paymentId = null) {
+  currentPaymentInvoiceId = invoiceId;
+  currentPaymentMode = mode;
+  currentEditingPaymentId = paymentId;
+
+  const modal = document.getElementById('paymentModal');
+  const title = document.getElementById('paymentModalTitle');
+  const amountInput = document.getElementById('paymentAmount');
+  const paymentIdInput = document.getElementById('paymentId');
+  if (!modal || !title || !amountInput) return;
+
+  if (paymentId) {
+    title.textContent = 'Editar pago';
+    const { data: payment, error } = supabaseClient.from('invoice_payments').select('amount').eq('id', paymentId).single();
+    if (!error && payment) {
+      amountInput.value = formatNumberInput(String(Number(payment.amount || 0)), false);
+    }
+    if (paymentIdInput) paymentIdInput.value = paymentId;
+  } else {
+    title.textContent = mode === 'total' ? 'Registrar pago' : 'Registrar abono';
+    amountInput.value = '';
+    if (paymentIdInput) paymentIdInput.value = '';
+  }
+
+  modal.classList.remove('hidden');
+  setTimeout(() => amountInput.focus(), 50);
+}
+
+function closePaymentModal() {
+  const modal = document.getElementById('paymentModal');
+  if (modal) modal.classList.add('hidden');
+  currentPaymentInvoiceId = null;
+  currentPaymentMode = 'total';
+  currentEditingPaymentId = null;
+}
+
+async function submitPaymentForm(event) {
+  event.preventDefault();
+
+  const invoiceId = currentPaymentInvoiceId;
+  const paymentId = currentEditingPaymentId;
   if (!invoiceId) return;
+
+  const amountInput = document.getElementById('paymentAmount');
+  const rawAmount = String(amountInput?.value || '').replace(/\./g, '').replace(',', '.').trim();
+  const amount = Number(rawAmount);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert('El monto debe ser mayor a cero.');
+    return;
+  }
+
+  const { data: invoice, error } = await supabaseClient.from('invoices').select('*').eq('id', invoiceId).single();
+  if (error || !invoice) {
+    alert('No se pudo cargar la factura.');
+    closePaymentModal();
+    return;
+  }
+
+  const balance = Number(invoice.balance || 0);
+  if (paymentId) {
+    const { data: payment, error: paymentError } = await supabaseClient.from('invoice_payments').select('*').eq('id', paymentId).single();
+    if (paymentError || !payment) {
+      alert('No se pudo cargar el pago.');
+      closePaymentModal();
+      return;
+    }
+    const currentPaid = Number(invoice.paid_amount || 0) - Number(payment.amount || 0);
+    const nextPaid = currentPaid + amount;
+    const nextBalance = Math.max(Number(invoice.total || 0) - nextPaid, 0);
+
+    const { error: updatePaymentError } = await supabaseClient
+      .from('invoice_payments')
+      .update({ amount })
+      .eq('id', paymentId);
+
+    if (updatePaymentError) {
+      alert(updatePaymentError.message);
+      return;
+    }
+
+    const { error: updateInvoiceError } = await supabaseClient
+      .from('invoices')
+      .update({
+        paid_amount: nextPaid,
+        balance: nextBalance,
+        status: nextBalance > 0 ? 'PENDING' : 'PAID',
+      })
+      .eq('id', invoiceId);
+
+    if (updateInvoiceError) {
+      alert(updateInvoiceError.message);
+      return;
+    }
+
+    await recordAudit('edit_invoice_payment', 'invoice_payment', paymentId, {
+      invoiceId,
+      previousAmount: payment.amount,
+      newAmount: amount,
+    });
+  } else {
+    if (amount > balance) {
+      alert(`El monto no puede superar el saldo pendiente de ${formatMoney(balance)}.`);
+      return;
+    }
+
+    if (currentPaymentMode === 'total') {
+      await applyTotalPayment(invoiceId, amount);
+    } else {
+      await applyInvoiceAbono(invoiceId, Number(invoice.total || 0), Number(invoice.paid_amount || 0), Number(invoice.balance || 0), amount);
+    }
+  }
+
+  closePaymentModal();
+}
+
+async function applyTotalPayment(invoiceId, amount) {
+  if (!invoiceId || !Number.isFinite(amount) || amount <= 0) return;
 
   const { data: invoice, error } = await supabaseClient.from('invoices').select('*').eq('id', invoiceId).single();
   if (error || !invoice) {
@@ -1259,26 +1364,12 @@ async function applyTotalPayment(invoiceId) {
   }
 
   const balance = Number(invoice.balance || 0);
-  if (balance <= 0) {
-    alert('Esta factura ya está pagada.');
-    return;
-  }
-
-  const total = Number(invoice.total || 0);
-  const amountPrompt = window.prompt(`Ingrese el monto del pago (saldo pendiente: ${formatMoney(balance)}):`, formatMoney(balance));
-  if (amountPrompt === null) return;
-
-  const amount = Number(String(amountPrompt).replace(/\./g, '').replace(',', '.').trim());
-  if (!Number.isFinite(amount) || amount <= 0) {
-    alert('El pago debe ser mayor a cero.');
-    return;
-  }
-
   if (amount > balance) {
     alert(`El pago no puede superar el saldo pendiente de ${formatMoney(balance)}.`);
     return;
   }
 
+  const total = Number(invoice.total || 0);
   const isFullPayment = amount >= balance;
   const nextPaid = Number(invoice.paid_amount || 0) + amount;
   const nextBalance = Math.max(total - nextPaid, 0);
@@ -1322,6 +1413,153 @@ async function applyTotalPayment(invoiceId) {
   ]);
 }
 
+async function editInvoicePayment(paymentId) {
+  if (!paymentId) return;
+
+  const { data: payment, error: paymentError } = await supabaseClient
+    .from('invoice_payments')
+    .select('*')
+    .eq('id', paymentId)
+    .single();
+
+  if (paymentError || !payment) {
+    alert('No se pudo cargar el pago.');
+    return;
+  }
+
+  const { data: invoice, error: invoiceError } = await supabaseClient
+    .from('invoices')
+    .select('*')
+    .eq('id', payment.invoice_id)
+    .single();
+
+  if (invoiceError || !invoice) {
+    alert('No se pudo cargar la factura asociada.');
+    return;
+  }
+
+  const newAmountPrompt = window.prompt(`Editar monto del pago (actual: ${formatMoney(payment.amount || 0)}):`, formatMoney(payment.amount || 0));
+  if (newAmountPrompt === null) return;
+
+  const newAmount = Number(String(newAmountPrompt).replace(/\./g, '').replace(',', '.').trim());
+  if (!Number.isFinite(newAmount) || newAmount <= 0) {
+    alert('El monto debe ser mayor a cero.');
+    return;
+  }
+
+  const total = Number(invoice.total || 0);
+  const currentPaid = Number(invoice.paid_amount || 0) - Number(payment.amount || 0);
+  const nextPaid = currentPaid + newAmount;
+  const nextBalance = Math.max(total - nextPaid, 0);
+
+  const { error: updatePaymentError } = await supabaseClient
+    .from('invoice_payments')
+    .update({ amount: newAmount })
+    .eq('id', paymentId);
+
+  if (updatePaymentError) {
+    alert(updatePaymentError.message);
+    return;
+  }
+
+  const { error: updateInvoiceError } = await supabaseClient
+    .from('invoices')
+    .update({
+      paid_amount: nextPaid,
+      balance: nextBalance,
+      status: nextBalance > 0 ? 'PENDING' : 'PAID',
+    })
+    .eq('id', payment.invoice_id);
+
+  if (updateInvoiceError) {
+    alert(updateInvoiceError.message);
+    return;
+  }
+
+  await recordAudit('edit_invoice_payment', 'invoice_payment', paymentId, {
+    invoiceId: payment.invoice_id,
+    previousAmount: payment.amount,
+    newAmount,
+  });
+
+  await Promise.all([
+    loadInvoices(),
+    loadHistory(),
+    loadDashboard(),
+    loadAccountsReceivable(),
+    loadAccountsPayable(),
+    loadPayments(),
+  ]);
+}
+
+async function deleteInvoicePayment(paymentId) {
+  if (!paymentId) return;
+
+  const { data: payment, error: paymentError } = await supabaseClient
+    .from('invoice_payments')
+    .select('*')
+    .eq('id', paymentId)
+    .single();
+
+  if (paymentError || !payment) {
+    alert('No se pudo cargar el pago.');
+    return;
+  }
+
+  const { data: invoice, error: invoiceError } = await supabaseClient
+    .from('invoices')
+    .select('*')
+    .eq('id', payment.invoice_id)
+    .single();
+
+  if (invoiceError || !invoice) {
+    alert('No se pudo cargar la factura asociada.');
+    return;
+  }
+
+  const total = Number(invoice.total || 0);
+  const currentPaid = Number(invoice.paid_amount || 0) - Number(payment.amount || 0);
+  const nextBalance = Math.max(total - currentPaid, 0);
+
+  const { error: deletePaymentError } = await supabaseClient
+    .from('invoice_payments')
+    .delete()
+    .eq('id', paymentId);
+
+  if (deletePaymentError) {
+    alert(deletePaymentError.message);
+    return;
+  }
+
+  const { error: updateInvoiceError } = await supabaseClient
+    .from('invoices')
+    .update({
+      paid_amount: currentPaid,
+      balance: nextBalance,
+      status: nextBalance > 0 ? 'PENDING' : 'PAID',
+    })
+    .eq('id', payment.invoice_id);
+
+  if (updateInvoiceError) {
+    alert(updateInvoiceError.message);
+    return;
+  }
+
+  await recordAudit('delete_invoice_payment', 'invoice_payment', paymentId, {
+    invoiceId: payment.invoice_id,
+    deletedAmount: payment.amount,
+  });
+
+  await Promise.all([
+    loadInvoices(),
+    loadHistory(),
+    loadDashboard(),
+    loadAccountsReceivable(),
+    loadAccountsPayable(),
+    loadPayments(),
+  ]);
+}
+
 async function loadHistory() {
   const typeFilter = document.getElementById('historyTypeFilter')?.value || 'all';
   const paymentFilter = document.getElementById('historyPaymentFilter')?.value || 'all';
@@ -1346,6 +1584,8 @@ async function loadHistory() {
 
   const rows = [];
 
+  const paidInvoiceIds = new Set((paymentsResult.data || []).map((payment) => payment.invoice_id));
+
   (paymentsResult.data || []).forEach((payment) => {
     const invoice = invoiceMap.get(payment.invoice_id);
     if (!invoice) return;
@@ -1358,7 +1598,6 @@ async function loadHistory() {
     const paymentType = String(payment.payment_type || 'ABONO').toUpperCase();
     const operationType = getInvoiceOperationValue(invoice);
     const operationLabel = getInvoiceOperationLabel(invoice);
-    const operationId = getInvoiceOperationId(invoice);
     const totalValue = Number(payment.amount || 0);
 
     const detailLabel = paymentType === 'TOTAL' ? 'Pago neto' : 'Abono';
@@ -1367,15 +1606,42 @@ async function loadHistory() {
       source: 'payment',
       created_at: payment.created_at || invoice.created_at,
       invoiceNumber: invoice.invoice_number || '-',
-      operationId,
-      operationType,
-      operationLabel,
+      operationType: invoice.type || 'SALE',
+      operationLabel: paymentType === 'TOTAL' ? 'Pago neto' : 'Abono',
       paymentType,
+      paymentId: payment.id,
       product: product ? product.name : 'Producto',
       quantity: `${invoice.quantity ?? 0} ${product?.measure || 'und'}`,
       total: formatMoney(totalValue),
-      detail: `${invoice.type === 'PURCHASE' ? detailLabel + ' de compra' : detailLabel + ' de venta'} ${partyName} • ${formatMoney(payment.amount || 0)}`,
-      badgeClass: operationType === 'REMISION' ? 'history-badge-purchase' : 'history-badge-sale',
+      detail: `${invoice.type === 'PURCHASE' ? 'Compra' : 'Venta'} ${partyName} • ${formatMoney(payment.amount || 0)}`,
+      badgeClass: paymentType === 'TOTAL' ? 'history-badge-purchase' : 'history-badge-sale',
+    });
+  });
+
+  (invoicesResult.data || []).forEach((invoice) => {
+    if (paidInvoiceIds.has(invoice.id)) return;
+
+    const product = productMap.get(invoice.product_id);
+    const partyName = invoice.type === 'PURCHASE'
+      ? supplierMap.get(invoice.supplier_id)?.name || 'Proveedor'
+      : customerMap.get(invoice.customer_id)?.name || 'Cliente';
+
+    const operationType = getInvoiceOperationValue(invoice);
+    const operationLabel = getInvoiceOperationLabel(invoice);
+    const totalValue = Number(invoice.total || 0);
+
+    rows.push({
+      source: 'invoice',
+      created_at: invoice.created_at,
+      invoiceNumber: invoice.invoice_number || '-',
+      operationType: invoice.type || 'SALE',
+      operationLabel: 'Pendiente',
+      paymentType: 'PENDIENTE',
+      product: product ? product.name : 'Producto',
+      quantity: `${invoice.quantity ?? 0} ${product?.measure || 'und'}`,
+      total: formatMoney(totalValue),
+      detail: `Factura ${invoice.type === 'PURCHASE' ? 'de compra' : 'de venta'} ${partyName} • Pendiente`,
+      badgeClass: 'history-badge-sale',
     });
   });
 
@@ -1399,12 +1665,12 @@ async function loadHistory() {
     generalRow.innerHTML = `
       <td>${formatDate(row.created_at)}</td>
       <td>${row.invoiceNumber || '-'}</td>
-      <td>${row.operationId || '-'}</td>
       <td><span class="history-badge ${row.badgeClass}">${row.operationLabel}</span></td>
       <td>${row.product}</td>
       <td>${row.quantity}</td>
       <td>${row.total}</td>
       <td>${row.detail}</td>
+      <td>${row.source === 'payment' ? `<button class="secondary-action-btn" data-id="${row.paymentId}" data-type="edit-invoice-payment">Editar</button><button class="action-btn" data-id="${row.paymentId}" data-type="delete-invoice-payment">Eliminar</button>` : '-'}</td>
     `;
     generalBody.appendChild(generalRow);
 
@@ -1412,12 +1678,12 @@ async function loadHistory() {
     personalRow.innerHTML = `
       <td>${formatDate(row.created_at)}</td>
       <td>${row.invoiceNumber || '-'}</td>
-      <td>${row.operationId || '-'}</td>
       <td><span class="history-badge ${row.badgeClass}">${row.operationLabel}</span></td>
       <td>${row.product}</td>
       <td>${row.quantity}</td>
       <td>${row.total}</td>
       <td>${row.detail}</td>
+      <td>${row.source === 'payment' ? `<button class="secondary-action-btn" data-id="${row.paymentId}" data-type="edit-invoice-payment">Editar</button><button class="action-btn" data-id="${row.paymentId}" data-type="delete-invoice-payment">Eliminar</button>` : '-'}</td>
     `;
     personalBody.appendChild(personalRow);
   });
@@ -1601,7 +1867,7 @@ async function saveInvoice(event) {
   const qtyField = getFormField(form, 'invoiceQty', 'invoiceQty');
   const priceField = getFormField(form, 'invoicePrice', 'invoicePrice');
   const paymentTypeField = getFormField(form, 'invoicePaymentType', 'invoicePaymentType');
-  const operationTypeField = getFormField(form, 'invoiceOperationType', 'invoiceOperationType');
+  const operationReferenceField = getFormField(form, 'invoiceOperationReference', 'invoiceOperationReference');
   const initialPaymentField = getFormField(form, 'invoiceInitialPayment', 'invoiceInitialPayment');
   const noteField = getFormField(form, 'invoiceNote', 'invoiceNote');
 
@@ -1630,10 +1896,7 @@ async function saveInvoice(event) {
   const quantity = parseFormattedNumber(qtyField?.value);
   const price = parseFormattedNumber(priceField?.value);
   const paymentType = paymentTypeField?.value || 'TOTAL';
-  const operationType = type === 'PURCHASE' ? 'REMISION' : 'DESPACHO';
-  if (operationTypeField) {
-    operationTypeField.value = operationType;
-  }
+  const operationReference = (operationReferenceField?.value || '').trim();
   const initialPaymentAmount = parseFormattedNumber(initialPaymentField?.value);
   const note = noteField?.value.trim() || '';
 
@@ -1702,7 +1965,8 @@ async function saveInvoice(event) {
     unit_price: productPrice,
     total,
     payment_type: normalizedPaymentType,
-    operation_type: operationType,
+    operation_type: type,
+    operation_reference: operationReference || null,
     paid_amount: finalPaidAmount,
     balance: finalBalance,
     status: finalBalance > 0 ? 'PENDING' : 'PAID',
@@ -1899,10 +2163,15 @@ async function deleteRecord(type, id) {
     'delete-customer': 'customers',
     'delete-supplier': 'suppliers',
     'delete-user': 'profiles',
+    'delete-invoice': 'invoices',
   };
 
   const table = map[type];
   if (!table) return;
+
+  if (type === 'delete-invoice') {
+    await supabaseClient.from('invoice_payments').delete().eq('invoice_id', id);
+  }
 
   const { error } = await supabaseClient.from(table).delete().eq('id', id);
   if (error) {
@@ -2114,6 +2383,10 @@ async function startEditInvoice(id) {
           </select>
         </label>
         <label>
+          <span>Referencia</span>
+          <input type="text" id="invoiceOperationReference" value="${(data.operation_reference || '').replace(/"/g, '&quot;')}" />
+        </label>
+        <label>
           <span>Observación</span>
           <input type="text" id="invoiceNote" value="${(data.note || '').replace(/"/g, '&quot;')}" />
         </label>
@@ -2178,12 +2451,16 @@ async function openInvoicePaymentHistory(invoiceId) {
     body.innerHTML = payments.map((payment) => `
       <div class="history-modal-item">
         <div class="history-modal-head">
-          <strong>${payment.payment_type === 'TOTAL' ? 'Pago total' : 'Abono'}</strong>
+          <strong>${payment.payment_type === 'TOTAL' ? 'Pago neto' : 'Abono'}</strong>
           <span>${formatDate(payment.created_at)}</span>
         </div>
         <div class="history-modal-body-text">
           <span>Monto: ${formatMoney(payment.amount || 0)}</span>
           <span>Factura: ${invoiceData.invoice_number || '-'}</span>
+        </div>
+        <div class="history-modal-actions">
+          <button class="secondary-action-btn" data-id="${payment.id}" data-type="edit-invoice-payment">Editar</button>
+          <button class="action-btn" data-id="${payment.id}" data-type="delete-invoice-payment">Eliminar</button>
         </div>
       </div>
     `).join('');
@@ -2244,6 +2521,11 @@ function bindInvoiceEditModalBehavior(form) {
 
   const updateVisibility = async () => {
     const isPurchase = typeField?.value === 'PURCHASE';
+
+    const operationReferenceField = form.querySelector('#invoiceOperationReference');
+    if (operationReferenceField) {
+      operationReferenceField.placeholder = 'Referencia';
+    }
 
     if (customerField) {
       customerField.classList.toggle('hidden', isPurchase);
@@ -2338,6 +2620,14 @@ document.getElementById('closeModuleHistory')?.addEventListener('click', () => {
   if (modal) modal.classList.add('hidden');
 });
 
+document.getElementById('closePaymentModal')?.addEventListener('click', closePaymentModal);
+
+document.getElementById('paymentModal')?.addEventListener('click', (event) => {
+  if (event.target && event.target.id === 'paymentModal') {
+    closePaymentModal();
+  }
+});
+
 document.getElementById('closeRecordEditModal')?.addEventListener('click', () => {
   closeEditModal();
 });
@@ -2369,6 +2659,16 @@ document.getElementById('registerForm').addEventListener('submit', async (event)
   await registerUser(name, email, password);
 });
 
+document.getElementById('paymentForm')?.addEventListener('submit', submitPaymentForm);
+
+document.getElementById('closePaymentModal')?.addEventListener('click', closePaymentModal);
+
+document.getElementById('paymentModal')?.addEventListener('click', (event) => {
+  if (event.target && event.target.id === 'paymentModal') {
+    closePaymentModal();
+  }
+});
+
 document.getElementById('logoutBtn').addEventListener('click', logoutUser);
 
 document.querySelectorAll('.nav-item').forEach((button) => {
@@ -2382,6 +2682,7 @@ applyFormattedNumberListener('productSalePrice', false);
 applyFormattedNumberListener('invoiceQty', false);
 applyFormattedNumberListener('invoicePrice', false);
 applyFormattedNumberListener('invoiceInitialPayment', false);
+applyFormattedNumberListener('paymentAmount', false);
 
 ['invoiceQty', 'invoicePrice'].forEach((id) => {
   const element = document.getElementById(id);
@@ -2442,14 +2743,13 @@ document.getElementById('invoiceType').addEventListener('change', async (event) 
   const isPurchase = event.target.value === 'PURCHASE';
   const customerSelect = document.getElementById('invoiceCustomerId');
   const supplierSelect = document.getElementById('invoiceSupplierId');
-  const operationTypeField = document.getElementById('invoiceOperationType');
   const productId = document.getElementById('invoiceProductId').value;
 
   await syncInvoiceNumber();
 
-  if (operationTypeField) {
-    operationTypeField.value = isPurchase ? 'REMISION' : 'DESPACHO';
-    operationTypeField.disabled = true;
+  const operationReferenceField = document.getElementById('invoiceOperationReference');
+  if (operationReferenceField) {
+    operationReferenceField.placeholder = 'Referencia';
   }
 
   if (customerSelect) {
@@ -2494,6 +2794,7 @@ document.getElementById('supplierForm').addEventListener('submit', saveSupplier)
 document.getElementById('invoiceForm').addEventListener('submit', saveInvoice);
 refreshInvoiceFormDefaults();
 document.getElementById('userForm').addEventListener('submit', saveUser);
+document.getElementById('paymentForm')?.addEventListener('submit', submitPaymentForm);
 
 document.addEventListener('click', async (event) => {
   const button = event.target.closest('.secondary-action-btn');
@@ -2506,13 +2807,18 @@ document.addEventListener('click', async (event) => {
     if (type === 'edit-invoice') await startEditInvoice(id);
     if (type === 'reset-user-password') await resetPasswordForUser(id);
     if (type === 'view-invoice-payments') await openInvoicePaymentHistory(id);
-    if (type === 'add-invoice-abono') {
+    if (type === 'open-payment-total') {
+      openPaymentModal(id, 'total');
+    }
+    if (type === 'open-payment-abono') {
       const invoice = (await supabaseClient.from('invoices').select('*').eq('id', id).single()).data;
       if (!invoice) return;
-      await applyInvoiceAbono(invoice.id, Number(invoice.total || 0), Number(invoice.paid_amount || 0), Number(invoice.balance || 0));
+      openPaymentModal(id, 'abono');
     }
-    if (type === 'pay-invoice-total') {
-      await applyTotalPayment(id);
+    if (type === 'edit-invoice-payment') {
+      const payment = (await supabaseClient.from('invoice_payments').select('invoice_id').eq('id', id).single()).data;
+      if (!payment) return;
+      openPaymentModal(payment.invoice_id, 'total', id);
     }
     return;
   }
@@ -2521,8 +2827,13 @@ document.addEventListener('click', async (event) => {
   if (!deleteButton) return;
 
   const { id, type } = deleteButton.dataset;
-  if (type === 'delete-product' || type === 'delete-customer' || type === 'delete-supplier' || type === 'delete-user') {
+  if (type === 'delete-product' || type === 'delete-customer' || type === 'delete-supplier' || type === 'delete-user' || type === 'delete-invoice') {
+    closePaymentModal();
     await deleteRecord(type, id);
+  }
+  if (type === 'delete-invoice-payment') {
+    closePaymentModal();
+    await deleteInvoicePayment(id);
   }
 });
 

@@ -140,7 +140,7 @@
             <div class="accounts-header">
               <h3>Cuentas por cobrar</h3>
               <div class="accounts-filters">
-                <input id="receivableInvoiceSearch" type="text" placeholder="Buscar factura o id de operación" />
+                <input id="receivableInvoiceSearch" type="text" placeholder="Buscar factura o remisión/recibido" />
               </div>
             </div>
             <ul id="accountsReceivableList" class="debt-list"></ul>
@@ -152,7 +152,7 @@
             <div class="accounts-header">
               <h3>Cuentas por pagar</h3>
               <div class="accounts-filters">
-                <input id="payableInvoiceSearch" type="text" placeholder="Buscar factura o id de operación" />
+                <input id="payableInvoiceSearch" type="text" placeholder="Buscar factura o remisión/recibido" />
               </div>
             </div>
             <ul id="accountsPayableList" class="debt-list"></ul>
@@ -164,11 +164,11 @@
             <div class="accounts-header">
               <h3>Pagos / Abonos</h3>
               <div class="accounts-filters">
-                <input id="paymentSearch" type="text" placeholder="Buscar factura o id de operación" />
+                <input id="paymentSearch" type="text" placeholder="Buscar factura o referencia" />
                 <select id="paymentOperationFilter" class="history-filter-select">
                   <option value="all">Todas</option>
-                  <option value="DESPACHO">Despacho</option>
-                  <option value="REMISION">Remisión</option>
+                  <option value="SALE">Venta</option>
+                  <option value="PURCHASE">Compra</option>
                 </select>
               </div>
             </div>
@@ -265,7 +265,7 @@
               </select>
               <select id="invoiceCustomerId"></select>
               <select id="invoiceSupplierId" class="hidden"></select>
-              <input type="text" id="invoiceNumber" placeholder="Número factura" required />
+              <input type="text" id="invoiceNumber" placeholder="Número factura" required readonly />
               <select id="invoiceProductId"></select>
               <input type="text" id="invoiceQty" placeholder="Cantidad" inputmode="decimal" required />
               <input type="text" id="invoicePrice" placeholder="Precio unitario" inputmode="decimal" required />
@@ -273,10 +273,7 @@
                 <option value="TOTAL">Pago total</option>
                 <option value="ABONO">Abono</option>
               </select>
-              <select id="invoiceOperationType" disabled>
-                <option value="DESPACHO">Despacho</option>
-                <option value="REMISION">Remisión</option>
-              </select>
+              <input type="text" id="invoiceOperationReference" placeholder="Referencia" />
               <input type="text" id="invoiceInitialPayment" class="hidden" placeholder="Ej: 1.000.000" inputmode="decimal" />
               <input type="text" id="invoiceNote" placeholder="Observación" />
               <div class="invoice-summary">
@@ -290,11 +287,11 @@
           <div class="panel table-panel">
             <div class="history-toolbar invoice-toolbar">
               <div class="history-filters invoice-filters">
-                <input id="invoiceListSearch" type="text" placeholder="Buscar factura o id de operación" />
+                <input id="invoiceListSearch" type="text" placeholder="Buscar factura o remisión/recibido" />
                 <select id="invoiceOperationFilter" class="history-filter-select">
                   <option value="all">Todas</option>
-                  <option value="DESPACHO">Despacho</option>
-                  <option value="REMISION">Remisión</option>
+                  <option value="SALE">Venta</option>
+                  <option value="PURCHASE">Compra</option>
                 </select>
               </div>
             </div>
@@ -302,8 +299,8 @@
               <thead>
                 <tr>
                   <th>Factura</th>
-                  <th>ID operación</th>
                   <th>Tipo</th>
+                  <th>Remisión</th>
                   <th>Cliente/Proveedor</th>
                   <th>Producto</th>
                   <th>Cantidad</th>
@@ -328,8 +325,8 @@
               <div class="history-filters">
                 <select id="historyTypeFilter" class="history-filter-select">
                   <option value="all">Todas</option>
-                  <option value="DESPACHO">Despacho</option>
-                  <option value="REMISION">Remisión</option>
+                  <option value="SALE">Venta</option>
+                  <option value="PURCHASE">Compra</option>
                 </select>
                 <select id="historyPaymentFilter" class="history-filter-select">
                   <option value="all">Todo</option>
@@ -344,12 +341,12 @@
                   <tr>
                     <th>Fecha</th>
                     <th>Factura</th>
-                    <th>ID operación</th>
-                    <th>Operación lado</th>
+                    <th>Tipo</th>
                     <th>Producto</th>
                     <th>Cantidad</th>
                     <th>Total</th>
                     <th>Detalle</th>
+                    <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody id="historyGeneralBody"></tbody>
@@ -361,12 +358,12 @@
                   <tr>
                     <th>Fecha</th>
                     <th>Factura</th>
-                    <th>ID operación</th>
-                    <th>Operación lado</th>
+                    <th>Tipo</th>
                     <th>Producto</th>
                     <th>Cantidad</th>
                     <th>Total</th>
                     <th>Detalle</th>
+                    <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody id="historyPersonalBody"></tbody>
@@ -382,6 +379,25 @@
               <button type="button" id="closeModuleHistory" class="secondary-btn">Cerrar</button>
             </div>
             <div id="moduleHistoryBody" class="history-modal-list"></div>
+          </div>
+        </div>
+
+        <div id="paymentModal" class="modal hidden">
+          <div class="modal-content modal-content-small">
+            <div class="modal-header">
+              <h3 id="paymentModalTitle">Registrar pago</h3>
+              <button type="button" id="closePaymentModal" class="secondary-btn">Cerrar</button>
+            </div>
+            <form id="paymentForm" class="row-form payment-form">
+              <input type="hidden" id="paymentId" />
+              <label>
+                <span>Monto</span>
+                <input type="text" id="paymentAmount" placeholder="Ej: 1.000.000" inputmode="decimal" required />
+              </label>
+              <div class="modal-actions">
+                <button type="submit" class="primary-btn">Guardar</button>
+              </div>
+            </form>
           </div>
         </div>
 
