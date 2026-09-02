@@ -399,43 +399,6 @@ async function loginUser(email, password) {
   showMessage('Sesión iniciada correctamente.');
 }
 
-async function registerUser(name, email, password) {
-  if (!checkSupabaseSetup()) return;
-
-  const { data, error } = await supabaseClient.auth.signUp({
-    email,
-    password,
-    options: { emailRedirectTo: window.location.origin },
-  });
-
-  if (error) {
-    showMessage(error.message, true);
-    return;
-  }
-
-  if (!data.user) {
-    showMessage('No se pudo crear el usuario en Auth.', true);
-    return;
-  }
-
-  const { error: profileError } = await supabaseClient.from('profiles').upsert(
-    { id: data.user.id, full_name: name, email, role: 'VIEWER' },
-    { onConflict: 'id' }
-  );
-
-  if (profileError) {
-    showMessage('El usuario quedó creado en Auth, pero falló el perfil: ' + profileError.message, true);
-    return;
-  }
-
-  await recordAudit('create_user', 'profile', data.user.id, { name, email, role: 'VIEWER' });
-  showMessage('Cuenta creada correctamente. Ya puedes iniciar sesión.');
-  switchTab('login');
-  document.getElementById('registerForm').reset();
-  switchTab('login');
-  document.getElementById('registerForm').reset();
-}
-
 async function logoutUser() {
   await supabaseClient.auth.signOut();
   state.currentUser = null;
@@ -2720,17 +2683,6 @@ async function openInvoicePaymentHistory(invoiceId) {
   }
 }
 
-function switchTab(tabName) {
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.classList.toggle('active', tab.dataset.tab === tabName);
-  });
-
-  const forms = document.querySelectorAll('.auth-form');
-  forms.forEach((form) => {
-    form.classList.toggle('active-form', form.id === `${tabName}Form`);
-  });
-}
-
 function switchHistoryTab(tabName) {
   document.querySelectorAll('.history-tab').forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.history === tabName);
@@ -2899,9 +2851,7 @@ function bindInvoiceEditModalBehavior(form) {
   updateVisibility();
 }
 
-document.querySelectorAll('.tab').forEach((tab) => {
-  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
-});
+
 
 document.querySelectorAll('.history-tab').forEach((tab) => {
   tab.addEventListener('click', () => switchHistoryTab(tab.dataset.history));
@@ -3180,14 +3130,6 @@ document.getElementById('loginForm').addEventListener('submit', async (event) =>
   const email = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
   await loginUser(email, password);
-});
-
-document.getElementById('registerForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const name = document.getElementById('registerName').value.trim();
-  const email = document.getElementById('registerEmail').value.trim();
-  const password = document.getElementById('registerPassword').value;
-  await registerUser(name, email, password);
 });
 
 document.getElementById('paymentForm')?.addEventListener('submit', submitPaymentForm);
