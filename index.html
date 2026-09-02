@@ -222,6 +222,7 @@
               <thead>
                 <tr>
                   <th>Nombre</th>
+                  <th>Saldo a favor</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
@@ -244,6 +245,7 @@
               <thead>
                 <tr>
                   <th>Nombre</th>
+                  <th>Saldo a favor</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
@@ -273,7 +275,16 @@
                 <option value="TOTAL">Pago total</option>
                 <option value="ABONO">Abono</option>
               </select>
-              <input type="text" id="invoiceOperationReference" placeholder="Referencia" />
+              <select id="invoicePaymentMethod">
+                <option value="EFECTIVO">Efectivo</option>
+                <option value="TRANSFERENCIA">Transferencia</option>
+              </select>
+              <label class="checkbox-label">
+                <input type="checkbox" id="invoiceUseCreditBalance" />
+                <span>Usar saldo a favor</span>
+              </label>
+              <span id="availableCreditBalance" class="credit-balance-info"></span>
+              <input type="text" id="invoiceOperationReference" placeholder="Remisión" />
               <input type="text" id="invoiceInitialPayment" class="hidden" placeholder="Ej: 1.000.000" inputmode="decimal" />
               <input type="text" id="invoiceNote" placeholder="Observación" />
               <div class="invoice-summary">
@@ -293,7 +304,16 @@
                   <option value="SALE">Venta</option>
                   <option value="PURCHASE">Compra</option>
                 </select>
+                <select id="invoicePartyTypeFilter" class="history-filter-select">
+                  <option value="all">Todos</option>
+                  <option value="CLIENTE">Clientes</option>
+                  <option value="PROVEEDOR">Proveedores</option>
+                </select>
+                <select id="invoicePartyFilter" class="history-filter-select">
+                  <option value="">Seleccionar</option>
+                </select>
               </div>
+              <button type="button" id="downloadInvoiceExcelBtn" class="secondary-btn">Descargar Excel</button>
             </div>
             <table>
               <thead>
@@ -306,6 +326,7 @@
                   <th>Cantidad</th>
                   <th>Total</th>
                   <th>Tipo de pago</th>
+                  <th>Método</th>
                   <th>Fecha</th>
                   <th>Acciones</th>
                 </tr>
@@ -446,6 +467,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

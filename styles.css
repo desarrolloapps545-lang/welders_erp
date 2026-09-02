@@ -824,6 +824,29 @@ button, input, select {
   flex-wrap: wrap;
 }
 
+.history-modal-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(30, 41, 59, 0.95);
+  margin-bottom: 12px;
+}
+
+.history-modal-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.history-modal-detail-row strong {
+  color: var(--text);
+}
+
 .payment-form .row-form label span {
   display: block;
   margin-bottom: 6px;
@@ -839,6 +862,32 @@ button, input, select {
   padding: 10px 12px;
   color: var(--text);
   font-size: 1rem;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--text);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.checkbox-label span {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.2;
+  max-width: 120px;
+}
+
+.credit-balance-info {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--success);
+  font-weight: 700;
+  font-size: 0.85rem;
 }
 
 @media (max-width: 900px) {

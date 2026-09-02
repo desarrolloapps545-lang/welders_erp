@@ -64,12 +64,20 @@ function resetUserFormState() {
 function syncInvoicePaymentFields(form = document) {
   const paymentTypeField = getFormField(form, 'invoicePaymentType', 'invoicePaymentType');
   const initialPaymentField = getFormField(form, 'invoiceInitialPayment', 'invoiceInitialPayment');
+  const useCreditCheckbox = getFormField(form, 'invoiceUseCreditBalance', 'invoiceUseCreditBalance');
+  const creditBalanceEl = getFormField(form, 'availableCreditBalance', 'availableCreditBalance');
 
   if (!paymentTypeField || !initialPaymentField) return;
 
   const isAbono = (paymentTypeField.value || 'TOTAL').toUpperCase() === 'ABONO';
   initialPaymentField.classList.toggle('hidden', !isAbono);
   initialPaymentField.disabled = !isAbono;
+
+  if (useCreditCheckbox) {
+    if (!isAbono && !useCreditCheckbox.checked) {
+      useCreditCheckbox.disabled = false;
+    }
+  }
 
   if (!isAbono) {
     initialPaymentField.value = '';
@@ -87,13 +95,14 @@ function resetFormState(form) {
     const customerSelect = document.getElementById('invoiceCustomerId');
     const supplierSelect = document.getElementById('invoiceSupplierId');
     const paymentType = document.getElementById('invoicePaymentType');
+    const paymentMethod = document.getElementById('invoicePaymentMethod');
     const initialPayment = document.getElementById('invoiceInitialPayment');
     const preview = document.getElementById('invoiceTotalPreview');
 
     if (invoiceType) invoiceType.value = 'SALE';
     if (operationReference) {
       operationReference.value = '';
-      operationReference.placeholder = 'Referencia';
+      operationReference.placeholder = 'Remisión';
     }
     if (customerSelect) {
       customerSelect.disabled = false;
@@ -104,10 +113,19 @@ function resetFormState(form) {
       supplierSelect.classList.add('hidden');
     }
     if (paymentType) paymentType.value = 'TOTAL';
+    if (paymentMethod) paymentMethod.value = 'EFECTIVO';
     if (initialPayment) {
       initialPayment.value = '';
       initialPayment.classList.add('hidden');
       initialPayment.disabled = true;
+    }
+    const useCreditCheckbox = document.getElementById('invoiceUseCreditBalance');
+    if (useCreditCheckbox) {
+      useCreditCheckbox.checked = false;
+    }
+    const creditBalanceEl = document.getElementById('availableCreditBalance');
+    if (creditBalanceEl) {
+      creditBalanceEl.textContent = '';
     }
     if (preview) preview.textContent = formatMoney(0);
     syncInvoiceNumber();
@@ -425,7 +443,7 @@ async function logoutUser() {
   showMessage('Sesión cerrada.');
 }
 
-async function registerInvoicePayment(invoiceId, amount, source = 'ABONO') {
+async function registerInvoicePayment(invoiceId, amount, source = 'ABONO', paymentMethod = 'EFECTIVO') {
   if (!invoiceId || !Number(amount) || Number(amount) <= 0) return;
 
   const { error } = await supabaseClient.from('invoice_payments').insert([
@@ -433,6 +451,7 @@ async function registerInvoicePayment(invoiceId, amount, source = 'ABONO') {
       invoice_id: invoiceId,
       amount: Number(amount),
       payment_type: source,
+      payment_method: paymentMethod,
       created_at: new Date().toISOString(),
     },
   ]);
@@ -923,7 +942,7 @@ async function loadCustomers() {
   }
 
   if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No hay clientes.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No hay clientes.</td></tr>';
     return;
   }
 
@@ -931,6 +950,7 @@ async function loadCustomers() {
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${customer.name || '-'}</td>
+      <td>${formatMoney(Number(customer.credit_balance || 0))}</td>
       <td>
         <button class="secondary-action-btn" data-id="${customer.id}" data-type="edit-customer">Editar</button>
         <button class="action-btn" data-id="${customer.id}" data-type="delete-customer">Eliminar</button>
@@ -951,7 +971,7 @@ async function loadSuppliers() {
   tbody.innerHTML = '';
 
   if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No hay proveedores.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No hay proveedores.</td></tr>';
     return;
   }
 
@@ -959,6 +979,7 @@ async function loadSuppliers() {
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${supplier.name || '-'}</td>
+      <td>${formatMoney(Number(supplier.credit_balance || 0))}</td>
       <td>
         <button class="secondary-action-btn" data-id="${supplier.id}" data-type="edit-supplier">Editar</button>
         <button class="action-btn" data-id="${supplier.id}" data-type="delete-supplier">Eliminar</button>
@@ -1115,6 +1136,8 @@ async function loadInvoices() {
 
   const invoiceSearch = document.getElementById('invoiceListSearch');
   const operationFilter = document.getElementById('invoiceOperationFilter')?.value || 'all';
+  const partyTypeFilter = document.getElementById('invoicePartyTypeFilter')?.value || 'all';
+  const partyFilter = document.getElementById('invoicePartyFilter')?.value || '';
   const tbody = document.getElementById('invoicesTableBody');
   tbody.innerHTML = '';
 
@@ -1160,16 +1183,25 @@ async function loadInvoices() {
       const searchTerm = (invoiceSearch?.value || '').trim().toLowerCase();
       const matchesSearch = !searchTerm || row.search.includes(searchTerm);
       const matchesType = operationFilter === 'all' || row.type === operationFilter;
-      return matchesSearch && matchesType;
+
+      let matchesParty = true;
+      if (partyTypeFilter === 'CLIENTE') {
+        matchesParty = row.type === 'SALE' && row.invoice.customer_id === partyFilter;
+      } else if (partyTypeFilter === 'PROVEEDOR') {
+        matchesParty = row.type === 'PURCHASE' && row.invoice.supplier_id === partyFilter;
+      }
+
+      return matchesSearch && matchesType && matchesParty;
     });
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No hay facturas para este filtro.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No hay facturas para este filtro.</td></tr>';
     return;
   }
 
   rows.forEach(({ invoice, partyName, product, operationLabel, totalDisplay, paymentTypeLabel }) => {
     const row = document.createElement('tr');
+    const paymentMethodLabel = invoice.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
     row.innerHTML = `
       <td>${invoice.invoice_number || '-'}</td>
       <td>${operationLabel}</td>
@@ -1179,6 +1211,7 @@ async function loadInvoices() {
       <td>${invoice.quantity ?? 0}</td>
       <td>${totalDisplay}</td>
       <td>${paymentTypeLabel}</td>
+      <td>${paymentMethodLabel}</td>
       <td>${formatDate(invoice.created_at)}</td>
       <td>
         <button class="secondary-action-btn" data-id="${invoice.id}" data-type="edit-invoice">Editar</button>
@@ -1193,13 +1226,10 @@ async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBa
   if (!invoiceId || !Number.isFinite(amount) || amount <= 0) return;
 
   const remainingBalance = Number(currentBalance || 0);
-  if (amount > remainingBalance) {
-    alert(`El abono no puede superar el saldo pendiente de ${formatMoney(remainingBalance)}.`);
-    return;
-  }
-
+  const total = Number(currentTotal || 0);
+  const isOverpayment = amount > remainingBalance;
   const nextPaid = Number(currentPaid || 0) + amount;
-  const nextBalance = Math.max(currentTotal - nextPaid, 0);
+  const nextBalance = Math.max(total - nextPaid, 0);
 
   const { error } = await supabaseClient
     .from('invoices')
@@ -1215,13 +1245,50 @@ async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBa
     return;
   }
 
-  await registerInvoicePayment(invoiceId, amount, 'ABONO');
+  const { data: invoiceForPayment } = await supabaseClient
+    .from('invoices')
+    .select('payment_method')
+    .eq('id', invoiceId)
+    .single();
+
+  await registerInvoicePayment(invoiceId, amount, 'ABONO', invoiceForPayment?.payment_method || 'EFECTIVO');
+
+  if (isOverpayment) {
+    const overpayment = amount - remainingBalance;
+    const { data: invoice, error: invoiceError } = await supabaseClient
+      .from('invoices')
+      .select('type, customer_id, supplier_id')
+      .eq('id', invoiceId)
+      .single();
+
+    if (!invoiceError && invoice) {
+      const updateTable = invoice.type === 'PURCHASE' ? 'suppliers' : 'customers';
+      const updateId = invoice.type === 'PURCHASE' ? invoice.supplier_id : invoice.customer_id;
+
+      if (updateId) {
+        const { data: party, error: partyError } = await supabaseClient
+          .from(updateTable)
+          .select('credit_balance')
+          .eq('id', updateId)
+          .single();
+
+        if (!partyError && party) {
+          const currentCredit = Number(party.credit_balance || 0);
+          await supabaseClient
+            .from(updateTable)
+            .update({ credit_balance: currentCredit + overpayment })
+            .eq('id', updateId);
+        }
+      }
+    }
+  }
 
   await recordAudit('add_invoice_abono', 'invoice', invoiceId, {
     previousPaid: Number(currentPaid || 0),
     addedAmount: amount,
     newPaid: nextPaid,
     newBalance: nextBalance,
+    overpayment: isOverpayment ? amount - remainingBalance : 0,
   });
 
   await Promise.all([
@@ -1231,6 +1298,8 @@ async function applyInvoiceAbono(invoiceId, currentTotal, currentPaid, currentBa
     loadAccountsReceivable(),
     loadAccountsPayable(),
     loadPayments(),
+    loadCustomers(),
+    loadSuppliers(),
   ]);
 }
 
@@ -1338,12 +1407,29 @@ async function submitPaymentForm(event) {
       previousAmount: payment.amount,
       newAmount: amount,
     });
-  } else {
-    if (amount > balance) {
-      alert(`El monto no puede superar el saldo pendiente de ${formatMoney(balance)}.`);
-      return;
-    }
 
+    if (amount > Number(invoice.balance || 0)) {
+      const overpayment = amount - Number(invoice.balance || 0);
+      const updateTable = invoice.type === 'PURCHASE' ? 'suppliers' : 'customers';
+      const updateId = invoice.type === 'PURCHASE' ? invoice.supplier_id : invoice.customer_id;
+
+      if (updateId) {
+        const { data: party, error: partyError } = await supabaseClient
+          .from(updateTable)
+          .select('credit_balance')
+          .eq('id', updateId)
+          .single();
+
+        if (!partyError && party) {
+          const currentCredit = Number(party.credit_balance || 0);
+          await supabaseClient
+            .from(updateTable)
+            .update({ credit_balance: currentCredit + overpayment })
+            .eq('id', updateId);
+        }
+      }
+    }
+  } else {
     if (currentPaymentMode === 'total') {
       await applyTotalPayment(invoiceId, amount);
     } else {
@@ -1364,11 +1450,6 @@ async function applyTotalPayment(invoiceId, amount) {
   }
 
   const balance = Number(invoice.balance || 0);
-  if (amount > balance) {
-    alert(`El pago no puede superar el saldo pendiente de ${formatMoney(balance)}.`);
-    return;
-  }
-
   const total = Number(invoice.total || 0);
   const isFullPayment = amount >= balance;
   const nextPaid = Number(invoice.paid_amount || 0) + amount;
@@ -1394,13 +1475,36 @@ async function applyTotalPayment(invoiceId, amount) {
     return;
   }
 
-  await registerInvoicePayment(invoiceId, amount, isFullPayment ? 'TOTAL' : 'ABONO');
+  await registerInvoicePayment(invoiceId, amount, isFullPayment ? 'TOTAL' : 'ABONO', invoice.payment_method || 'EFECTIVO');
+
+  if (isFullPayment && amount > balance) {
+    const overpayment = amount - balance;
+    const updateTable = invoice.type === 'PURCHASE' ? 'suppliers' : 'customers';
+    const updateId = invoice.type === 'PURCHASE' ? invoice.supplier_id : invoice.customer_id;
+
+    if (updateId) {
+      const { data: party, error: partyError } = await supabaseClient
+        .from(updateTable)
+        .select('credit_balance')
+        .eq('id', updateId)
+        .single();
+
+      if (!partyError && party) {
+        const currentCredit = Number(party.credit_balance || 0);
+        await supabaseClient
+          .from(updateTable)
+          .update({ credit_balance: currentCredit + overpayment })
+          .eq('id', updateId);
+      }
+    }
+  }
 
   await recordAudit(isFullPayment ? 'pay_invoice_total' : 'add_invoice_abono', 'invoice', invoiceId, {
     previousPaid: Number(invoice.paid_amount || 0),
     amount,
     newPaid: nextPaid,
     newBalance: nextBalance,
+    overpayment: isFullPayment ? Math.max(amount - balance, 0) : 0,
   });
 
   await Promise.all([
@@ -1410,6 +1514,8 @@ async function applyTotalPayment(invoiceId, amount) {
     loadAccountsReceivable(),
     loadAccountsPayable(),
     loadPayments(),
+    loadCustomers(),
+    loadSuppliers(),
   ]);
 }
 
@@ -1605,6 +1711,7 @@ async function loadHistory() {
     rows.push({
       source: 'payment',
       created_at: payment.created_at || invoice.created_at,
+      invoiceId: invoice.id,
       invoiceNumber: invoice.invoice_number || '-',
       operationType: invoice.type || 'SALE',
       operationLabel: paymentType === 'TOTAL' ? 'Pago neto' : 'Abono',
@@ -1633,6 +1740,7 @@ async function loadHistory() {
     rows.push({
       source: 'invoice',
       created_at: invoice.created_at,
+      invoiceId: invoice.id,
       invoiceNumber: invoice.invoice_number || '-',
       operationType: invoice.type || 'SALE',
       operationLabel: 'Pendiente',
@@ -1661,7 +1769,14 @@ async function loadHistory() {
   }
 
   filteredRows.forEach((row) => {
+    const isPayment = row.source === 'payment';
+    const hasInvoiceId = !!row.invoiceId;
+
     const generalRow = document.createElement('tr');
+    if (hasInvoiceId) {
+      generalRow.setAttribute('data-invoice-id', row.invoiceId);
+      generalRow.style.cursor = 'pointer';
+    }
     generalRow.innerHTML = `
       <td>${formatDate(row.created_at)}</td>
       <td>${row.invoiceNumber || '-'}</td>
@@ -1670,11 +1785,15 @@ async function loadHistory() {
       <td>${row.quantity}</td>
       <td>${row.total}</td>
       <td>${row.detail}</td>
-      <td>${row.source === 'payment' ? `<button class="secondary-action-btn" data-id="${row.paymentId}" data-type="edit-invoice-payment">Editar</button><button class="action-btn" data-id="${row.paymentId}" data-type="delete-invoice-payment">Eliminar</button>` : '-'}</td>
+      <td>${isPayment ? `<button class="secondary-action-btn" data-id="${row.paymentId}" data-type="edit-invoice-payment">Editar</button><button class="action-btn" data-id="${row.paymentId}" data-type="delete-invoice-payment">Eliminar</button>` : '-'}</td>
     `;
     generalBody.appendChild(generalRow);
 
     const personalRow = document.createElement('tr');
+    if (hasInvoiceId) {
+      personalRow.setAttribute('data-invoice-id', row.invoiceId);
+      personalRow.style.cursor = 'pointer';
+    }
     personalRow.innerHTML = `
       <td>${formatDate(row.created_at)}</td>
       <td>${row.invoiceNumber || '-'}</td>
@@ -1683,7 +1802,7 @@ async function loadHistory() {
       <td>${row.quantity}</td>
       <td>${row.total}</td>
       <td>${row.detail}</td>
-      <td>${row.source === 'payment' ? `<button class="secondary-action-btn" data-id="${row.paymentId}" data-type="edit-invoice-payment">Editar</button><button class="action-btn" data-id="${row.paymentId}" data-type="delete-invoice-payment">Eliminar</button>` : '-'}</td>
+      <td>${isPayment ? `<button class="secondary-action-btn" data-id="${row.paymentId}" data-type="edit-invoice-payment">Editar</button><button class="action-btn" data-id="${row.paymentId}" data-type="delete-invoice-payment">Eliminar</button>` : '-'}</td>
     `;
     personalBody.appendChild(personalRow);
   });
@@ -1867,6 +1986,7 @@ async function saveInvoice(event) {
   const qtyField = getFormField(form, 'invoiceQty', 'invoiceQty');
   const priceField = getFormField(form, 'invoicePrice', 'invoicePrice');
   const paymentTypeField = getFormField(form, 'invoicePaymentType', 'invoicePaymentType');
+  const paymentMethodField = getFormField(form, 'invoicePaymentMethod', 'invoicePaymentMethod');
   const operationReferenceField = getFormField(form, 'invoiceOperationReference', 'invoiceOperationReference');
   const initialPaymentField = getFormField(form, 'invoiceInitialPayment', 'invoiceInitialPayment');
   const noteField = getFormField(form, 'invoiceNote', 'invoiceNote');
@@ -1896,6 +2016,7 @@ async function saveInvoice(event) {
   const quantity = parseFormattedNumber(qtyField?.value);
   const price = parseFormattedNumber(priceField?.value);
   const paymentType = paymentTypeField?.value || 'TOTAL';
+  const paymentMethod = paymentMethodField?.value || 'EFECTIVO';
   const operationReference = (operationReferenceField?.value || '').trim();
   const initialPaymentAmount = parseFormattedNumber(initialPaymentField?.value);
   const note = noteField?.value.trim() || '';
@@ -1906,6 +2027,14 @@ async function saveInvoice(event) {
     alert(type === 'PURCHASE' ? 'Debe completar proveedor, factura y producto.' : 'Debe completar cliente, factura y producto.');
     return;
   }
+
+  const { data: partyData, error: partyError } = await supabaseClient
+    .from(type === 'PURCHASE' ? 'suppliers' : 'customers')
+    .select('credit_balance')
+    .eq('id', partyId)
+    .single();
+
+  const availableCredit = Number(partyData?.credit_balance || 0);
 
   if (quantity <= 0 || price <= 0) {
     alert('La cantidad y el precio deben ser mayores a cero.');
@@ -1927,13 +2056,9 @@ async function saveInvoice(event) {
   const total = quantity * productPrice;
   const normalizedPaymentType = paymentType === 'ABONO' ? 'ABONO' : 'TOTAL';
 
-  if (normalizedPaymentType === 'ABONO' && initialPaymentAmount > total) {
-    alert(`El abono inicial no puede superar el total de la factura (${formatMoney(total)}).`);
-    return;
-  }
-
   let finalPaidAmount = 0;
   let finalBalance = total;
+  let creditUsed = 0;
 
   if (editingInvoiceId) {
     const { data: existingInvoice, error: existingError } = await supabaseClient.from('invoices').select('*').eq('id', editingInvoiceId).single();
@@ -1946,12 +2071,27 @@ async function saveInvoice(event) {
     finalPaidAmount = Math.min(Math.max(currentPaid, 0), total);
     finalBalance = Math.max(total - finalPaidAmount, 0);
   } else {
-    if (normalizedPaymentType === 'TOTAL') {
+    const useCreditCheckbox = getFormField(form, 'invoiceUseCreditBalance', 'invoiceUseCreditBalance');
+    const creditApplied = useCreditCheckbox && useCreditCheckbox.checked && availableCredit > 0;
+
+    if (normalizedPaymentType === 'ABONO') {
+      const maxAllowedAbono = total + availableCredit;
+      if (initialPaymentAmount > maxAllowedAbono) {
+        alert(`El abono inicial no puede superar el total de la factura más el saldo a favor disponible (${formatMoney(maxAllowedAbono)}).`);
+        return;
+      }
+
+      const creditToUse = Math.max(initialPaymentAmount - total, 0);
+      creditUsed = Math.min(creditToUse, availableCredit);
+      finalPaidAmount = initialPaymentAmount;
+      finalBalance = Math.max(total - initialPaymentAmount, 0);
+    } else if (creditApplied) {
+      creditUsed = Math.min(availableCredit, total);
+      finalPaidAmount = creditUsed;
+      finalBalance = Math.max(total - creditUsed, 0);
+    } else {
       finalPaidAmount = 0;
       finalBalance = total;
-    } else {
-      finalPaidAmount = initialPaymentAmount;
-      finalBalance = total - initialPaymentAmount;
     }
   }
 
@@ -1965,6 +2105,7 @@ async function saveInvoice(event) {
     unit_price: productPrice,
     total,
     payment_type: normalizedPaymentType,
+    payment_method: paymentMethod,
     operation_type: type,
     operation_reference: operationReference || null,
     paid_amount: finalPaidAmount,
@@ -1988,10 +2129,35 @@ async function saveInvoice(event) {
   const invoiceResult = result.data && result.data[0] ? result.data[0] : null;
   if (invoiceResult) {
     if (!editingInvoiceId && normalizedPaymentType === 'ABONO' && initialPaymentAmount > 0) {
-      await registerInvoicePayment(invoiceResult.id, initialPaymentAmount, 'ABONO');
+      await registerInvoicePayment(invoiceResult.id, initialPaymentAmount, 'ABONO', paymentMethod);
     }
 
-    await recordAudit(editingInvoiceId ? 'update_invoice' : 'create_invoice', 'invoice', invoiceResult.id, { customerId, supplierId, invoiceNumber, total, type, paymentType: normalizedPaymentType, paidAmount: finalPaidAmount, balance: finalBalance, initialPaymentAmount });
+    if (!editingInvoiceId && creditUsed > 0 && normalizedPaymentType === 'TOTAL') {
+      await registerInvoicePayment(invoiceResult.id, creditUsed, 'TOTAL', paymentMethod);
+    }
+
+    if (!editingInvoiceId && creditUsed > 0) {
+      const updateTable = type === 'PURCHASE' ? 'suppliers' : 'customers';
+      const updateId = type === 'PURCHASE' ? supplierId : customerId;
+
+      if (updateId) {
+        const { data: party, error: partyError } = await supabaseClient
+          .from(updateTable)
+          .select('credit_balance')
+          .eq('id', updateId)
+          .single();
+
+        if (!partyError && party) {
+          const currentCredit = Number(party.credit_balance || 0);
+          await supabaseClient
+            .from(updateTable)
+            .update({ credit_balance: Math.max(currentCredit - creditUsed, 0) })
+            .eq('id', updateId);
+        }
+      }
+    }
+
+    await recordAudit(editingInvoiceId ? 'update_invoice' : 'create_invoice', 'invoice', invoiceResult.id, { customerId, supplierId, invoiceNumber, total, type, paymentType: normalizedPaymentType, paymentMethod, paidAmount: finalPaidAmount, balance: finalBalance, initialPaymentAmount, creditUsed });
   }
 
   if (form) {
@@ -2383,7 +2549,14 @@ async function startEditInvoice(id) {
           </select>
         </label>
         <label>
-          <span>Referencia</span>
+          <span>Método de pago</span>
+          <select id="invoicePaymentMethod">
+            <option value="EFECTIVO" ${data.payment_method === 'EFECTIVO' ? 'selected' : ''}>Efectivo</option>
+            <option value="TRANSFERENCIA" ${data.payment_method === 'TRANSFERENCIA' ? 'selected' : ''}>Transferencia</option>
+          </select>
+        </label>
+        <label>
+          <span>Remisión</span>
           <input type="text" id="invoiceOperationReference" value="${(data.operation_reference || '').replace(/"/g, '&quot;')}" />
         </label>
         <label>
@@ -2416,8 +2589,8 @@ async function openInvoicePaymentHistory(invoiceId) {
 
   if (!modal || !title || !body) return;
 
-  title.textContent = 'Historial de abonos';
-  body.innerHTML = '<div class="empty-state">Cargando abonos...</div>';
+  title.textContent = 'Detalle de factura y pagos';
+  body.innerHTML = '<div class="empty-state">Cargando...</div>';
   modal.classList.remove('hidden');
 
   try {
@@ -2443,27 +2616,100 @@ async function openInvoicePaymentHistory(invoiceId) {
       return;
     }
 
+    const partyTable = invoiceData.type === 'PURCHASE' ? 'suppliers' : 'customers';
+    const partyId = invoiceData.type === 'PURCHASE' ? invoiceData.supplier_id : invoiceData.customer_id;
+    let partyName = '';
+    let invoiceOverpayment = 0;
+
+    const invoiceTotal = Number(invoiceData.total || 0);
+    const invoicePaid = Number(invoiceData.paid_amount || 0);
+    if (invoicePaid > invoiceTotal) {
+      invoiceOverpayment = invoicePaid - invoiceTotal;
+    }
+
+    if (partyId) {
+      const { data: party, error: partyError } = await supabaseClient
+        .from(partyTable)
+        .select('name')
+        .eq('id', partyId)
+        .single();
+
+      if (!partyError && party) {
+        partyName = party.name || '';
+      }
+    }
+
+    const { data: productData, error: productError } = await supabaseClient
+      .from('products')
+      .select('name, measure')
+      .eq('id', invoiceData.product_id)
+      .single();
+
+    const productName = productError || !productData ? 'Producto' : productData.name;
+    const productMeasure = productError || !productData ? 'und' : productData.measure;
+    const paymentMethodLabel = invoiceData.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+    const paymentTypeLabel = invoiceData.payment_type === 'ABONO' ? 'Abono' : 'Pago total';
+    const typeLabel = invoiceData.type === 'PURCHASE' ? 'Compra' : 'Venta';
+
+    const isSale = invoiceData.type === 'SALE';
+    const creditBalanceLabel = isSale
+      ? `Saldo a favor de "${partyName}"`
+      : 'Saldo a favor en';
+
+    const showCreditBalance = invoiceOverpayment > 0;
+    const creditBalanceSection = showCreditBalance ? `
+      <div class="history-modal-details" style="margin-top: 12px; border-color: rgba(34, 197, 94, 0.4);">
+        <div class="history-modal-detail-row"><span>Excedente:</span><strong style="color: #86efac;">${formatMoney(invoiceOverpayment)}</strong></div>
+        <div class="history-modal-detail-row"><span>${creditBalanceLabel}:</span><strong style="color: #86efac;">${formatMoney(invoiceOverpayment)}</strong></div>
+      </div>
+    ` : '';
+
+    const invoiceDetails = `
+      <div class="history-modal-details">
+        <div class="history-modal-detail-row"><span>Número de factura:</span><strong>${invoiceData.invoice_number || '-'}</strong></div>
+        <div class="history-modal-detail-row"><span>Tipo:</span><strong>${typeLabel}</strong></div>
+        <div class="history-modal-detail-row"><span>Producto:</span><strong>${productName}</strong></div>
+        <div class="history-modal-detail-row"><span>Cantidad:</span><strong>${invoiceData.quantity ?? 0} ${productMeasure}</strong></div>
+        <div class="history-modal-detail-row"><span>Precio unitario:</span><strong>${formatMoney(Number(invoiceData.unit_price || 0))}</strong></div>
+        <div class="history-modal-detail-row"><span>Total factura:</span><strong>${formatMoney(Number(invoiceData.total || 0))}</strong></div>
+        <div class="history-modal-detail-row"><span>Total pagado:</span><strong>${formatMoney(Number(invoiceData.paid_amount || 0))}</strong></div>
+        <div class="history-modal-detail-row"><span>Saldo pendiente:</span><strong>${formatMoney(Number(invoiceData.balance || 0))}</strong></div>
+        <div class="history-modal-detail-row"><span>Tipo de pago:</span><strong>${paymentTypeLabel}</strong></div>
+        <div class="history-modal-detail-row"><span>Método de pago:</span><strong>${paymentMethodLabel}</strong></div>
+        <div class="history-modal-detail-row"><span>Remisión:</span><strong>${invoiceData.operation_reference || '-'}</strong></div>
+        <div class="history-modal-detail-row"><span>Fecha:</span><strong>${formatDate(invoiceData.created_at)}</strong></div>
+        <div class="history-modal-detail-row"><span>Estado:</span><strong>${invoiceData.status === 'PAID' ? 'Pagada' : 'Pendiente'}</strong></div>
+        ${invoiceData.note ? `<div class="history-modal-detail-row"><span>Observación:</span><strong>${invoiceData.note}</strong></div>` : ''}
+      </div>
+      ${creditBalanceSection}
+    `;
+
+    const paymentsTitle = `
+      <h4 style="margin: 18px 0 12px; font-size: 0.95rem; color: var(--text);">Historial de pagos (${payments ? payments.length : 0})</h4>
+    `;
+
     if (!payments || payments.length === 0) {
-      body.innerHTML = '<div class="empty-state">No hay abonos registrados para esta factura.</div>';
+      body.innerHTML = invoiceDetails + paymentsTitle + '<div class="empty-state">No hay pagos registrados para esta factura.</div>';
       return;
     }
 
-    body.innerHTML = payments.map((payment) => `
-      <div class="history-modal-item">
-        <div class="history-modal-head">
-          <strong>${payment.payment_type === 'TOTAL' ? 'Pago neto' : 'Abono'}</strong>
-          <span>${formatDate(payment.created_at)}</span>
+    const paymentsHtml = payments.map((payment) => {
+      const paymentMethod = payment.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+      return `
+        <div class="history-modal-item">
+          <div class="history-modal-head">
+            <strong>${payment.payment_type === 'TOTAL' ? 'Pago total' : 'Abono'}</strong>
+            <span>${formatDate(payment.created_at)}</span>
+          </div>
+          <div class="history-modal-body-text">
+            <span>Monto: ${formatMoney(payment.amount || 0)}</span>
+            <span>Método: ${paymentMethod}</span>
+          </div>
         </div>
-        <div class="history-modal-body-text">
-          <span>Monto: ${formatMoney(payment.amount || 0)}</span>
-          <span>Factura: ${invoiceData.invoice_number || '-'}</span>
-        </div>
-        <div class="history-modal-actions">
-          <button class="secondary-action-btn" data-id="${payment.id}" data-type="edit-invoice-payment">Editar</button>
-          <button class="action-btn" data-id="${payment.id}" data-type="delete-invoice-payment">Eliminar</button>
-        </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
+
+    body.innerHTML = invoiceDetails + paymentsTitle + paymentsHtml;
   } catch (error) {
     console.error(error);
     body.innerHTML = '<div class="empty-state">No se pudo cargar el historial de pagos.</div>';
@@ -2544,6 +2790,25 @@ function bindInvoiceEditModalBehavior(form) {
       supplierSelect.classList.toggle('hidden', !isPurchase);
     }
 
+    const partySelect = isPurchase ? supplierSelect : customerSelect;
+    const partyId = partySelect?.value;
+    const creditBalanceEl = form.querySelector('#availableCreditBalance');
+
+    if (creditBalanceEl) {
+      if (!partyId) {
+        creditBalanceEl.textContent = '';
+      } else {
+        const table = isPurchase ? 'suppliers' : 'customers';
+        const { data: party, error } = await supabaseClient.from(table).select('credit_balance').eq('id', partyId).single();
+        if (!error && party) {
+          const credit = Number(party.credit_balance || 0);
+          creditBalanceEl.textContent = credit > 0 ? `Saldo a favor: ${formatMoney(credit)}` : '';
+        } else {
+          creditBalanceEl.textContent = '';
+        }
+      }
+    }
+
     const productId = productSelect?.value;
     if (productId) {
       const { data } = await supabaseClient.from('products').select('*').eq('id', productId).single();
@@ -2587,6 +2852,46 @@ function bindInvoiceEditModalBehavior(form) {
   qtyField?.addEventListener('input', () => syncInvoicePreview(form));
   priceField?.addEventListener('input', () => syncInvoicePreview(form));
 
+  const useCreditCheckbox = form.querySelector('#invoiceUseCreditBalance');
+  const initialPaymentField = form.querySelector('#invoiceInitialPayment');
+  if (useCreditCheckbox && initialPaymentField) {
+    useCreditCheckbox.addEventListener('change', async () => {
+      if (!useCreditCheckbox.checked) {
+        initialPaymentField.value = '';
+        syncInvoicePreview(form);
+        return;
+      }
+
+      const isPurchase = typeField?.value === 'PURCHASE';
+      const partySelect = isPurchase ? form.querySelector('#invoiceSupplierId') : form.querySelector('#invoiceCustomerId');
+      const partyId = partySelect?.value;
+
+      if (!partyId) {
+        alert('Seleccione un cliente o proveedor primero.');
+        useCreditCheckbox.checked = false;
+        return;
+      }
+
+      const table = isPurchase ? 'suppliers' : 'customers';
+      const { data: party, error } = await supabaseClient.from(table).select('credit_balance').eq('id', partyId).single();
+      if (error || !party) {
+        alert('No se pudo cargar el saldo a favor.');
+        useCreditCheckbox.checked = false;
+        return;
+      }
+
+      const credit = Number(party.credit_balance || 0);
+      if (credit <= 0) {
+        alert('No hay saldo a favor disponible.');
+        useCreditCheckbox.checked = false;
+        return;
+      }
+
+      initialPaymentField.value = formatNumberInput(String(credit), false);
+      syncInvoicePreview(form);
+    });
+  }
+
   updateVisibility();
 }
 
@@ -2614,7 +2919,229 @@ document.getElementById('invoiceOperationFilter')?.addEventListener('change', as
   await loadInvoices();
 });
 
+document.getElementById('invoicePartyTypeFilter')?.addEventListener('change', async () => {
+  await refreshPartyFilterOptions();
+  await loadInvoices();
+});
+
+document.getElementById('invoicePartyFilter')?.addEventListener('change', async () => {
+  await loadInvoices();
+});
+
+async function refreshPartyFilterOptions() {
+  const partyTypeFilter = document.getElementById('invoicePartyTypeFilter')?.value || 'all';
+  const partyFilter = document.getElementById('invoicePartyFilter');
+  if (!partyFilter) return;
+
+  partyFilter.innerHTML = '<option value="">Seleccionar</option>';
+
+  if (partyTypeFilter === 'CLIENTE') {
+    const { data: customers } = await supabaseClient.from('customers').select('*').order('name');
+    if (customers) {
+      customers.forEach((customer) => {
+        const option = document.createElement('option');
+        option.value = customer.id;
+        option.textContent = customer.name;
+        partyFilter.appendChild(option);
+      });
+    }
+  } else if (partyTypeFilter === 'PROVEEDOR') {
+    const { data: suppliers } = await supabaseClient.from('suppliers').select('*').order('name');
+    if (suppliers) {
+      suppliers.forEach((supplier) => {
+        const option = document.createElement('option');
+        option.value = supplier.id;
+        option.textContent = supplier.name;
+        partyFilter.appendChild(option);
+      });
+    }
+  }
+}
+
+async function downloadInvoiceExcel() {
+  const invoiceSearch = document.getElementById('invoiceListSearch')?.value || '';
+  const operationFilter = document.getElementById('invoiceOperationFilter')?.value || 'all';
+  const partyTypeFilter = document.getElementById('invoicePartyTypeFilter')?.value || 'all';
+  const partyFilter = document.getElementById('invoicePartyFilter')?.value || '';
+
+  const { data: invoices, error } = await supabaseClient
+    .from('invoices')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    alert('Error al cargar las facturas: ' + error.message);
+    return;
+  }
+
+  if (!invoices || invoices.length === 0) {
+    alert('No hay facturas para exportar.');
+    return;
+  }
+
+  const customers = await supabaseClient.from('customers').select('*');
+  const suppliers = await supabaseClient.from('suppliers').select('*');
+  const products = await supabaseClient.from('products').select('*');
+  const payments = await supabaseClient.from('invoice_payments').select('*');
+
+  const customerMap = new Map((customers.data || []).map((c) => [c.id, c]));
+  const supplierMap = new Map((suppliers.data || []).map((s) => [s.id, s]));
+  const productMap = new Map((products.data || []).map((p) => [p.id, p]));
+  const paymentsByInvoice = new Map();
+
+  (payments.data || []).forEach((payment) => {
+    if (!paymentsByInvoice.has(payment.invoice_id)) {
+      paymentsByInvoice.set(payment.invoice_id, []);
+    }
+    paymentsByInvoice.get(payment.invoice_id).push(payment);
+  });
+
+  const filteredInvoices = (invoices || []).filter((invoice) => {
+    const searchTerm = invoiceSearch.trim().toLowerCase();
+    const matchesSearch = !searchTerm ||
+      (invoice.invoice_number || '').toLowerCase().includes(searchTerm) ||
+      (invoice.operation_reference || '').toLowerCase().includes(searchTerm);
+
+    const matchesType = operationFilter === 'all' || invoice.type === operationFilter;
+
+    let matchesParty = true;
+    if (partyTypeFilter === 'CLIENTE') {
+      matchesParty = invoice.type === 'SALE' && invoice.customer_id === partyFilter;
+    } else if (partyTypeFilter === 'PROVEEDOR') {
+      matchesParty = invoice.type === 'PURCHASE' && invoice.supplier_id === partyFilter;
+    }
+
+    return matchesSearch && matchesType && matchesParty;
+  });
+
+  const wb = XLSX.utils.book_new();
+
+  const operacionesHeader = ['Id operacion', 'Fecha', 'Remisión', 'Unidades', 'Producto', 'Precio de compra', 'Total de compra', 'Saldo pendiente', 'Metodo de pago', 'Observacion'];
+  const operacionesData = [operacionesHeader];
+
+  filteredInvoices.forEach((invoice) => {
+    const product = productMap.get(invoice.product_id);
+    const measure = product?.measure || 'und';
+    const productName = product?.name || '';
+    const paymentMethodLabel = invoice.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+    const saldoPendiente = Number(invoice.balance || 0);
+
+    operacionesData.push([
+      invoice.invoice_number || '',
+      formatDate(invoice.created_at),
+      invoice.operation_reference || '',
+      `${invoice.quantity ?? 0} ${measure}`,
+      productName,
+      Number(invoice.unit_price || 0),
+      Number(invoice.total || 0),
+      saldoPendiente,
+      paymentMethodLabel,
+      invoice.note || '',
+    ]);
+  });
+
+  const operacionesSheet = XLSX.utils.aoa_to_sheet(operacionesData);
+  operacionesSheet['!cols'] = [
+    { wch: 15 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 },
+    { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 18 }, { wch: 25 },
+  ];
+
+  for (let j = 0; j < operacionesHeader.length; j++) {
+    const cellRef = XLSX.utils.encode_cell({ r: 0, c: j });
+    if (operacionesSheet[cellRef]) {
+      operacionesSheet[cellRef].s = {
+        font: { bold: true },
+        alignment: { horizontal: 'center', vertical: 'center' },
+      };
+    }
+  }
+
+  XLSX.utils.book_append_sheet(wb, operacionesSheet, 'Operaciones');
+
+  for (const invoice of filteredInvoices) {
+    const invoicePayments = paymentsByInvoice.get(invoice.id) || [];
+    const invoiceTotal = Number(invoice.total || 0);
+    const product = productMap.get(invoice.product_id);
+    const measure = product?.measure || 'und';
+    const productName = product?.name || '';
+    const paymentMethodLabel = invoice.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+    const saldoPendiente = Number(invoice.balance || 0);
+
+    const sheetName = `Op ${invoice.invoice_number || invoice.id}`.substring(0, 31);
+    const sheetData = [];
+
+    sheetData.push([`Operacion ${invoice.invoice_number || ''}`]);
+    sheetData.push([]);
+
+    sheetData.push(['Fecha', 'Producto', 'Total factura', 'Remisión', 'Precio de compra', 'Unidades', 'Saldo pendiente', 'Metodo de pago']);
+    sheetData.push([
+      formatDate(invoice.created_at),
+      productName,
+      invoiceTotal,
+      invoice.operation_reference || '',
+      Number(invoice.unit_price || 0),
+      `${invoice.quantity ?? 0} ${measure}`,
+      saldoPendiente,
+      paymentMethodLabel,
+    ]);
+
+    sheetData.push([]);
+    const pagoTitleRow = sheetData.length;
+    sheetData.push([`Pago a operacion ${invoice.invoice_number || ''}`]);
+    sheetData.push([]);
+
+    const paymentHeaderRow = sheetData.length;
+    if (invoicePayments.length > 0) {
+      sheetData.push(['Fecha', 'Id operacion', 'Remisión', 'Medio de pago', 'Valor', 'Excedente']);
+      invoicePayments.forEach((payment) => {
+        const paymentValue = Number(payment.amount || 0);
+        const excedente = paymentValue > invoiceTotal ? paymentValue - invoiceTotal : 0;
+        sheetData.push([
+          formatDate(payment.created_at),
+          invoice.invoice_number || '',
+          invoice.operation_reference || '',
+          payment.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo',
+          paymentValue,
+          excedente > 0 ? excedente : '',
+        ]);
+      });
+    } else {
+      sheetData.push(['No hay pagos registrados para esta factura.']);
+    }
+
+    const paymentSheet = XLSX.utils.aoa_to_sheet(sheetData);
+
+    paymentSheet['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
+      { s: { r: pagoTitleRow, c: 0 }, e: { r: pagoTitleRow, c: 7 } },
+    ];
+
+    paymentSheet['!cols'] = [
+      { wch: 22 }, { wch: 20 }, { wch: 16 }, { wch: 15 }, { wch: 16 },
+      { wch: 14 }, { wch: 14 }, { wch: 16 },
+    ];
+
+    for (let i = 0; i < sheetData.length; i++) {
+      const row = sheetData[i];
+      for (let j = 0; j < row.length; j++) {
+        const cellRef = XLSX.utils.encode_cell({ r: i, c: j });
+        if (paymentSheet[cellRef]) {
+          paymentSheet[cellRef].s = {
+            font: { bold: i === 0 || i === pagoTitleRow || i === 2 || i === paymentHeaderRow },
+            alignment: { horizontal: 'center', vertical: 'center' },
+          };
+        }
+      }
+    }
+
+    XLSX.utils.book_append_sheet(wb, paymentSheet, sheetName);
+  }
+
+  XLSX.writeFile(wb, `Facturas_${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+
 document.getElementById('invoiceHistoryBtn')?.addEventListener('click', () => openModuleHistory('invoice'));
+document.getElementById('downloadInvoiceExcelBtn')?.addEventListener('click', downloadInvoiceExcel);
 document.getElementById('closeModuleHistory')?.addEventListener('click', () => {
   const modal = document.getElementById('moduleHistoryModal');
   if (modal) modal.classList.add('hidden');
@@ -2762,6 +3289,24 @@ document.getElementById('invoiceType').addEventListener('change', async (event) 
     supplierSelect.disabled = !isPurchase;
   }
 
+  const creditBalanceEl = document.getElementById('availableCreditBalance');
+  if (creditBalanceEl) {
+    const partySelect = isPurchase ? supplierSelect : customerSelect;
+    const partyId = partySelect?.value;
+    if (!partyId) {
+      creditBalanceEl.textContent = '';
+    } else {
+      const table = isPurchase ? 'suppliers' : 'customers';
+      const { data: party, error } = await supabaseClient.from(table).select('credit_balance').eq('id', partyId).single();
+      if (!error && party) {
+        const credit = Number(party.credit_balance || 0);
+        creditBalanceEl.textContent = credit > 0 ? `Saldo a favor: ${formatMoney(credit)}` : '';
+      } else {
+        creditBalanceEl.textContent = '';
+      }
+    }
+  }
+
   if (productId) {
     const { data } = await supabaseClient.from('products').select('*').eq('id', productId).single();
     if (data) {
@@ -2771,6 +3316,50 @@ document.getElementById('invoiceType').addEventListener('change', async (event) 
     }
   }
 });
+
+const invoiceCustomer = document.getElementById('invoiceCustomerId');
+if (invoiceCustomer) {
+  invoiceCustomer.addEventListener('change', async () => {
+    const creditBalanceEl = document.getElementById('availableCreditBalance');
+    if (!creditBalanceEl) return;
+
+    const partyId = invoiceCustomer.value;
+    if (!partyId) {
+      creditBalanceEl.textContent = '';
+      return;
+    }
+
+    const { data: customer, error } = await supabaseClient.from('customers').select('credit_balance').eq('id', partyId).single();
+    if (!error && customer) {
+      const credit = Number(customer.credit_balance || 0);
+      creditBalanceEl.textContent = credit > 0 ? `Saldo a favor: ${formatMoney(credit)}` : '';
+    } else {
+      creditBalanceEl.textContent = '';
+    }
+  });
+}
+
+const invoiceSupplier = document.getElementById('invoiceSupplierId');
+if (invoiceSupplier) {
+  invoiceSupplier.addEventListener('change', async () => {
+    const creditBalanceEl = document.getElementById('availableCreditBalance');
+    if (!creditBalanceEl) return;
+
+    const partyId = invoiceSupplier.value;
+    if (!partyId) {
+      creditBalanceEl.textContent = '';
+      return;
+    }
+
+    const { data: supplier, error } = await supabaseClient.from('suppliers').select('credit_balance').eq('id', partyId).single();
+    if (!error && supplier) {
+      const credit = Number(supplier.credit_balance || 0);
+      creditBalanceEl.textContent = credit > 0 ? `Saldo a favor: ${formatMoney(credit)}` : '';
+    } else {
+      creditBalanceEl.textContent = '';
+    }
+  });
+}
 
 const invoiceProduct = document.getElementById('invoiceProductId');
 if (invoiceProduct) {
@@ -2785,6 +3374,45 @@ if (invoiceProduct) {
     const defaultPrice = type === 'PURCHASE' ? Number(data.purchase_price || 0) : Number(data.sale_price || 0);
     document.getElementById('invoicePrice').value = formatNumberInput(String(defaultPrice), false);
     syncInvoicePreview();
+  });
+}
+
+const invoiceUseCreditCheckbox = document.getElementById('invoiceUseCreditBalance');
+const invoiceInitialPaymentField = document.getElementById('invoiceInitialPayment');
+if (invoiceUseCreditCheckbox) {
+  invoiceUseCreditCheckbox.addEventListener('change', async () => {
+    if (!invoiceUseCreditCheckbox.checked) {
+      invoiceInitialPaymentField.value = '';
+      return;
+    }
+
+    const type = document.getElementById('invoiceType').value || 'SALE';
+    const isPurchase = type === 'PURCHASE';
+    const partySelect = isPurchase ? document.getElementById('invoiceSupplierId') : document.getElementById('invoiceCustomerId');
+    const partyId = partySelect?.value;
+
+    if (!partyId) {
+      alert('Seleccione un cliente o proveedor primero.');
+      invoiceUseCreditCheckbox.checked = false;
+      return;
+    }
+
+    const table = isPurchase ? 'suppliers' : 'customers';
+    const { data: party, error } = await supabaseClient.from(table).select('credit_balance').eq('id', partyId).single();
+    if (error || !party) {
+      alert('No se pudo cargar el saldo a favor.');
+      invoiceUseCreditCheckbox.checked = false;
+      return;
+    }
+
+    const credit = Number(party.credit_balance || 0);
+    if (credit <= 0) {
+      alert('No hay saldo a favor disponible.');
+      invoiceUseCreditCheckbox.checked = false;
+      return;
+    }
+
+    invoiceInitialPaymentField.value = formatNumberInput(String(credit), false);
   });
 }
 
@@ -2824,16 +3452,25 @@ document.addEventListener('click', async (event) => {
   }
 
   const deleteButton = event.target.closest('.action-btn');
-  if (!deleteButton) return;
-
-  const { id, type } = deleteButton.dataset;
-  if (type === 'delete-product' || type === 'delete-customer' || type === 'delete-supplier' || type === 'delete-user' || type === 'delete-invoice') {
-    closePaymentModal();
-    await deleteRecord(type, id);
+  if (deleteButton) {
+    const { id, type } = deleteButton.dataset;
+    if (type === 'delete-product' || type === 'delete-customer' || type === 'delete-supplier' || type === 'delete-user' || type === 'delete-invoice') {
+      closePaymentModal();
+      await deleteRecord(type, id);
+    }
+    if (type === 'delete-invoice-payment') {
+      closePaymentModal();
+      await deleteInvoicePayment(id);
+    }
+    return;
   }
-  if (type === 'delete-invoice-payment') {
-    closePaymentModal();
-    await deleteInvoicePayment(id);
+
+  const historyRow = event.target.closest('tr[data-invoice-id]');
+  if (historyRow) {
+    const invoiceId = historyRow.dataset.invoiceId;
+    if (invoiceId) {
+      await openInvoicePaymentHistory(invoiceId);
+    }
   }
 });
 
