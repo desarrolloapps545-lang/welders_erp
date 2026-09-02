@@ -890,6 +890,57 @@ button, input, select {
   font-size: 0.85rem;
 }
 
+.credit-balance-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.credit-balance-available {
+  font-size: 1.1rem;
+  color: var(--success);
+  font-weight: 600;
+  text-align: center;
+  padding: 12px;
+  background: rgba(34, 197, 94, 0.1);
+  border-radius: 10px;
+}
+
+.credit-balance-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.credit-balance-options button {
+  flex: 1;
+  min-width: 150px;
+}
+
+#customCreditAmountSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#customCreditAmountSection label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+#customCreditAmountSection input {
+  width: 100%;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 1rem;
+}
+
 @media (max-width: 900px) {
   .app {
     flex-direction: column;

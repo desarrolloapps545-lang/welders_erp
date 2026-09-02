@@ -2081,8 +2081,12 @@ async function saveInvoice(event) {
         return;
       }
 
-      const creditToUse = Math.max(initialPaymentAmount - total, 0);
-      creditUsed = Math.min(creditToUse, availableCredit);
+      if (creditApplied) {
+        creditUsed = Math.min(initialPaymentAmount, availableCredit);
+      } else {
+        const creditToUse = Math.max(initialPaymentAmount - total, 0);
+        creditUsed = Math.min(creditToUse, availableCredit);
+      }
       finalPaidAmount = initialPaymentAmount;
       finalBalance = Math.max(total - initialPaymentAmount, 0);
     } else if (creditApplied) {
@@ -2770,7 +2774,7 @@ function bindInvoiceEditModalBehavior(form) {
 
     const operationReferenceField = form.querySelector('#invoiceOperationReference');
     if (operationReferenceField) {
-      operationReferenceField.placeholder = 'Referencia';
+      operationReferenceField.placeholder = 'Remisión';
     }
 
     if (customerField) {
@@ -3210,6 +3214,7 @@ applyFormattedNumberListener('invoiceQty', false);
 applyFormattedNumberListener('invoicePrice', false);
 applyFormattedNumberListener('invoiceInitialPayment', false);
 applyFormattedNumberListener('paymentAmount', false);
+applyFormattedNumberListener('customCreditAmount', false);
 
 ['invoiceQty', 'invoicePrice'].forEach((id) => {
   const element = document.getElementById(id);
@@ -3276,7 +3281,7 @@ document.getElementById('invoiceType').addEventListener('change', async (event) 
 
   const operationReferenceField = document.getElementById('invoiceOperationReference');
   if (operationReferenceField) {
-    operationReferenceField.placeholder = 'Referencia';
+    operationReferenceField.placeholder = 'Remisión';
   }
 
   if (customerSelect) {
@@ -3379,6 +3384,27 @@ if (invoiceProduct) {
 
 const invoiceUseCreditCheckbox = document.getElementById('invoiceUseCreditBalance');
 const invoiceInitialPaymentField = document.getElementById('invoiceInitialPayment');
+let pendingCreditBalance = 0;
+
+function openCreditBalanceModal(credit, partyName) {
+  pendingCreditBalance = credit;
+  const modal = document.getElementById('creditBalanceModal');
+  const availableEl = document.getElementById('creditBalanceAvailable');
+  const customSection = document.getElementById('customCreditAmountSection');
+  const customInput = document.getElementById('customCreditAmount');
+
+  availableEl.textContent = `Saldo a favor disponible: ${formatMoney(credit)}${partyName ? ` (${partyName})` : ''}`;
+  customSection.classList.add('hidden');
+  customInput.value = '';
+  modal.classList.remove('hidden');
+}
+
+function closeCreditBalanceModal() {
+  const modal = document.getElementById('creditBalanceModal');
+  modal.classList.add('hidden');
+  pendingCreditBalance = 0;
+}
+
 if (invoiceUseCreditCheckbox) {
   invoiceUseCreditCheckbox.addEventListener('change', async () => {
     if (!invoiceUseCreditCheckbox.checked) {
@@ -3398,7 +3424,7 @@ if (invoiceUseCreditCheckbox) {
     }
 
     const table = isPurchase ? 'suppliers' : 'customers';
-    const { data: party, error } = await supabaseClient.from(table).select('credit_balance').eq('id', partyId).single();
+    const { data: party, error } = await supabaseClient.from(table).select('credit_balance, name').eq('id', partyId).single();
     if (error || !party) {
       alert('No se pudo cargar el saldo a favor.');
       invoiceUseCreditCheckbox.checked = false;
@@ -3412,9 +3438,47 @@ if (invoiceUseCreditCheckbox) {
       return;
     }
 
-    invoiceInitialPaymentField.value = formatNumberInput(String(credit), false);
+    openCreditBalanceModal(credit, party.name || '');
   });
 }
+
+document.getElementById('closeCreditBalanceModal')?.addEventListener('click', () => {
+  closeCreditBalanceModal();
+  invoiceUseCreditCheckbox.checked = false;
+});
+
+document.getElementById('creditBalanceModal')?.addEventListener('click', (event) => {
+  if (event.target && event.target.id === 'creditBalanceModal') {
+    closeCreditBalanceModal();
+    invoiceUseCreditCheckbox.checked = false;
+  }
+});
+
+document.getElementById('useAllCreditBtn')?.addEventListener('click', () => {
+  invoiceInitialPaymentField.value = formatNumberInput(String(pendingCreditBalance), false);
+  closeCreditBalanceModal();
+});
+
+document.getElementById('useCustomCreditBtn')?.addEventListener('click', () => {
+  const customSection = document.getElementById('customCreditAmountSection');
+  const customInput = document.getElementById('customCreditAmount');
+  customSection.classList.remove('hidden');
+  customInput.value = formatNumberInput(String(pendingCreditBalance), false);
+  setTimeout(() => customInput.focus(), 50);
+});
+
+document.getElementById('confirmCustomCreditBtn')?.addEventListener('click', () => {
+  const customInput = document.getElementById('customCreditAmount');
+  const parsedAmount = parseFormattedNumber(customInput.value);
+
+  if (parsedAmount <= 0 || parsedAmount > pendingCreditBalance) {
+    alert(`El monto debe ser mayor a 0 y no exceder ${formatMoney(pendingCreditBalance)}.`);
+    return;
+  }
+
+  invoiceInitialPaymentField.value = formatNumberInput(String(parsedAmount), false);
+  closeCreditBalanceModal();
+});
 
 document.getElementById('productForm').addEventListener('submit', saveProduct);
 document.getElementById('customerForm').addEventListener('submit', saveCustomer);

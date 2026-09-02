@@ -432,6 +432,29 @@
           </div>
         </div>
 
+        <div id="creditBalanceModal" class="modal hidden">
+          <div class="modal-content modal-content-small">
+            <div class="modal-header">
+              <h3 id="creditBalanceModalTitle">Usar saldo a favor</h3>
+              <button type="button" id="closeCreditBalanceModal" class="secondary-btn">Cerrar</button>
+            </div>
+            <div class="credit-balance-modal-body">
+              <p id="creditBalanceAvailable" class="credit-balance-available"></p>
+              <div class="credit-balance-options">
+                <button type="button" id="useAllCreditBtn" class="secondary-btn">Usar todo el saldo</button>
+                <button type="button" id="useCustomCreditBtn" class="secondary-btn">Ingresar monto manual</button>
+              </div>
+              <div id="customCreditAmountSection" class="hidden">
+                <label>
+                  <span>Monto a usar</span>
+                  <input type="text" id="customCreditAmount" placeholder="Ej: 1.000.000" inputmode="decimal" />
+                </label>
+                <button type="button" id="confirmCustomCreditBtn" class="primary-btn">Confirmar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <section id="usersView" class="view">
           <div class="panel">
             <h3>Usuarios</h3>
