@@ -3480,6 +3480,15 @@ document.addEventListener('click', async (event) => {
   }
 });
 
+const menuToggle = document.getElementById('menuToggle');
+const sidebar = document.querySelector('.sidebar');
+if (menuToggle && sidebar) {
+  menuToggle.addEventListener('click', () => {
+    menuToggle.classList.toggle('active');
+    sidebar.classList.toggle('open');
+  });
+}
+
 (() => {
   if (!checkSupabaseSetup()) {
     renderUserState();
