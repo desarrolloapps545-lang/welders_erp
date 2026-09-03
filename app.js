@@ -645,6 +645,7 @@ async function loadPayments() {
         operationId,
         operationLabel,
         type: invoice.type,
+        partyId: invoice.type === 'PURCHASE' ? invoice.supplier_id : invoice.customer_id,
         partyName,
         productName: product?.name || 'Producto',
         quantity: invoice.quantity ?? 0,
@@ -652,10 +653,50 @@ async function loadPayments() {
         total: Number(invoice.total || 0),
         paid: Number(invoice.paid_amount || 0),
         balance: Number(invoice.balance || 0),
+        created_at: invoice.created_at,
       };
     });
 
-  list.innerHTML = rows.length
+  const partyGroups = new Map();
+  rows.forEach((row) => {
+    const key = `${row.type}-${row.partyId}`;
+    if (!partyGroups.has(key)) {
+      partyGroups.set(key, []);
+    }
+    partyGroups.get(key).push(row);
+  });
+
+  const generalDebtRows = [];
+  partyGroups.forEach((groupRows, key) => {
+    if (groupRows.length > 1) {
+      const [type, partyId] = key.split('-');
+      const partyName = groupRows[0].partyName;
+      const totalBalance = groupRows.reduce((sum, r) => sum + r.balance, 0);
+      const totalPaid = groupRows.reduce((sum, r) => sum + r.paid, 0);
+      const totalAmount = groupRows.reduce((sum, r) => sum + r.total, 0);
+
+      generalDebtRows.push({
+        id: `general-${key}`,
+        invoiceNumber: 'Deuda general',
+        operationLabel: type === 'PURCHASE' ? 'Compra' : 'Venta',
+        type,
+        partyName,
+        partyId,
+        productName: `${groupRows.length} facturas`,
+        quantity: groupRows.length,
+        measure: 'und',
+        total: totalAmount,
+        paid: totalPaid,
+        balance: totalBalance,
+        isGeneral: true,
+        invoiceIds: groupRows.map(r => r.id),
+      });
+    }
+  });
+
+  const allRows = [...rows, ...generalDebtRows];
+
+  list.innerHTML = allRows.length
     ? `<li class="debt-header">
         <div>Factura</div>
         <div>Tipo</div>
@@ -666,22 +707,29 @@ async function loadPayments() {
         <div>Pagado</div>
         <div>Saldo</div>
         <div>Acciones</div>
-      </li>` + rows.map((row) => `
-        <li class="debt-row">
-          <div class="debt-cell">${row.invoiceNumber}</div>
-          <div class="debt-cell">${row.operationLabel}</div>
-          <div class="debt-cell">${row.partyName}</div>
-          <div class="debt-cell">${row.productName}</div>
-          <div class="debt-cell">${row.quantity} ${row.measure}</div>
-          <div class="debt-cell debt-amount">${formatMoney(row.total)}</div>
-          <div class="debt-cell debt-amount">${formatMoney(row.paid)}</div>
-          <div class="debt-cell debt-amount">${formatMoney(row.balance)}</div>
-          <div class="debt-cell debt-actions">
-            <button class="secondary-action-btn" data-id="${row.id}" data-type="open-payment-total">Pagar</button>
-            <button class="secondary-action-btn" data-id="${row.id}" data-type="open-payment-abono">Abonar</button>
-          </div>
-        </li>
-      `).join('')
+      </li>` + allRows.map((row) => {
+        const isGeneral = row.isGeneral;
+        const actionButton = isGeneral
+          ? `<button class="secondary-action-btn" data-party-id="${row.partyId}" data-party-type="${row.type}" data-invoice-ids="${row.invoiceIds.join(',')}" data-type="open-general-payment">Abono general</button>`
+          : `<button class="secondary-action-btn" data-id="${row.id}" data-type="open-payment-total">Pagar</button>
+             <button class="secondary-action-btn" data-id="${row.id}" data-type="open-payment-abono">Abonar</button>`;
+        
+        return `
+          <li class="debt-row${isGeneral ? ' general-debt-row' : ''}">
+            <div class="debt-cell">${row.invoiceNumber}</div>
+            <div class="debt-cell">${row.operationLabel}</div>
+            <div class="debt-cell">${row.partyName}</div>
+            <div class="debt-cell">${row.productName}</div>
+            <div class="debt-cell">${row.quantity} ${row.measure}</div>
+            <div class="debt-cell debt-amount">${formatMoney(row.total)}</div>
+            <div class="debt-cell debt-amount">${formatMoney(row.paid)}</div>
+            <div class="debt-cell debt-amount">${formatMoney(row.balance)}</div>
+            <div class="debt-cell debt-actions">
+              ${actionButton}
+            </div>
+          </li>
+        `;
+      }).join('')
     : '<li class="empty-item">No hay facturas pendientes por pagar.</li>';
 }
 
@@ -3132,8 +3180,6 @@ document.getElementById('loginForm').addEventListener('submit', async (event) =>
   await loginUser(email, password);
 });
 
-document.getElementById('paymentForm')?.addEventListener('submit', submitPaymentForm);
-
 document.getElementById('closePaymentModal')?.addEventListener('click', closePaymentModal);
 
 document.getElementById('paymentModal')?.addEventListener('click', (event) => {
@@ -3422,6 +3468,181 @@ document.getElementById('confirmCustomCreditBtn')?.addEventListener('click', () 
   closeCreditBalanceModal();
 });
 
+let generalPaymentInvoices = [];
+
+async function openGeneralPaymentModal(partyId, partyType, invoiceIds) {
+  const modal = document.getElementById('generalPaymentModal');
+  const title = document.getElementById('generalPaymentModalTitle');
+  const partyNameEl = document.getElementById('generalPaymentPartyName');
+  const invoicesListEl = document.getElementById('generalPaymentInvoicesList');
+  const totalDebtEl = document.getElementById('generalPaymentTotalDebt');
+  const partyIdInput = document.getElementById('generalPartyId');
+  const partyTypeInput = document.getElementById('generalPartyType');
+  const invoiceIdsInput = document.getElementById('generalInvoiceIds');
+
+  if (!modal || !title) return;
+
+  const table = partyType === 'PURCHASE' ? 'suppliers' : 'customers';
+  const { data: party, error: partyError } = await supabaseClient.from(table).select('name').eq('id', partyId).single();
+  const partyName = partyError || !party ? (partyType === 'PURCHASE' ? 'Proveedor' : 'Cliente') : party.name;
+  const label = partyType === 'PURCHASE' ? `Deuda general a ${partyName}` : `Deuda general de ${partyName}`;
+
+  title.textContent = label;
+  partyNameEl.textContent = label;
+  partyIdInput.value = partyId;
+  partyTypeInput.value = partyType;
+  invoiceIdsInput.value = invoiceIds.join(',');
+
+  const { data: invoices, error: invoicesError } = await supabaseClient
+    .from('invoices')
+    .select('*')
+    .in('id', invoiceIds)
+    .order('created_at', { ascending: true });
+
+  if (invoicesError || !invoices) {
+    alert('No se pudieron cargar las facturas.');
+    return;
+  }
+
+  generalPaymentInvoices = invoices.map((invoice) => ({
+    id: invoice.id,
+    invoice_number: invoice.invoice_number || 'Factura',
+    total: Number(invoice.total || 0),
+    paid: Number(invoice.paid_amount || 0),
+    balance: Number(invoice.balance || 0),
+    created_at: invoice.created_at,
+  }));
+
+  const totalDebt = generalPaymentInvoices.reduce((sum, inv) => sum + inv.balance, 0);
+  totalDebtEl.textContent = formatMoney(totalDebt);
+
+  invoicesListEl.innerHTML = generalPaymentInvoices.map((inv) => `
+    <div class="general-invoice-item" data-invoice-id="${inv.id}">
+      <div class="invoice-info">
+        <strong>${inv.invoice_number}</strong>
+        <small>${formatDate(inv.created_at)}</small>
+      </div>
+      <div class="invoice-balance">${formatMoney(inv.balance)}</div>
+    </div>
+  `).join('');
+
+  document.getElementById('generalPaymentAmount').value = '';
+  modal.classList.remove('hidden');
+  setTimeout(() => document.getElementById('generalPaymentAmount')?.focus(), 50);
+}
+
+function closeGeneralPaymentModal() {
+  const modal = document.getElementById('generalPaymentModal');
+  if (modal) modal.classList.add('hidden');
+  generalPaymentInvoices = [];
+}
+
+async function submitGeneralPayment(event) {
+  event.preventDefault();
+
+  const partyId = document.getElementById('generalPartyId').value;
+  const partyType = document.getElementById('generalPartyType').value;
+  const invoiceIds = document.getElementById('generalInvoiceIds').value.split(',').filter(Boolean);
+  const amountInput = document.getElementById('generalPaymentAmount');
+  const methodInput = document.getElementById('generalPaymentMethod');
+
+  const rawAmount = String(amountInput?.value || '').replace(/\./g, '').replace(',', '.').trim();
+  const amount = Number(rawAmount);
+  const paymentMethod = methodInput?.value || 'EFECTIVO';
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert('El monto debe ser mayor a cero.');
+    return;
+  }
+
+  if (!partyId || !invoiceIds.length) {
+    alert('Faltan datos del pago general.');
+    return;
+  }
+
+  const { data: invoices, error } = await supabaseClient
+    .from('invoices')
+    .select('*')
+    .in('id', invoiceIds)
+    .order('created_at', { ascending: true });
+
+  if (error || !invoices) {
+    alert('No se pudieron cargar las facturas.');
+    return;
+  }
+
+  let remainingAmount = amount;
+  for (const invoice of invoices) {
+    if (remainingAmount <= 0) break;
+
+    const balance = Number(invoice.balance || 0);
+    if (balance <= 0) continue;
+
+    const paymentForThisInvoice = Math.min(remainingAmount, balance);
+    const nextPaid = Number(invoice.paid_amount || 0) + paymentForThisInvoice;
+    const nextBalance = Math.max(Number(invoice.total || 0) - nextPaid, 0);
+
+    const { error: updateError } = await supabaseClient
+      .from('invoices')
+      .update({
+        paid_amount: nextPaid,
+        balance: nextBalance,
+        status: nextBalance > 0 ? 'PENDING' : 'PAID',
+      })
+      .eq('id', invoice.id);
+
+    if (updateError) {
+      alert(`Error al actualizar factura ${invoice.invoice_number}: ${updateError.message}`);
+      return;
+    }
+
+    await registerInvoicePayment(invoice.id, paymentForThisInvoice, 'ABONO', paymentMethod);
+    remainingAmount -= paymentForThisInvoice;
+  }
+
+  if (remainingAmount > 0) {
+    const updateTable = partyType === 'PURCHASE' ? 'suppliers' : 'customers';
+    const { data: party, error: partyError } = await supabaseClient
+      .from(updateTable)
+      .select('credit_balance')
+      .eq('id', partyId)
+      .single();
+
+    if (!partyError && party) {
+      const currentCredit = Number(party.credit_balance || 0);
+      await supabaseClient
+        .from(updateTable)
+        .update({ credit_balance: currentCredit + remainingAmount })
+        .eq('id', partyId);
+    }
+  }
+
+  await recordAudit('general_invoice_abono', 'invoice', invoiceIds.join(','), {
+    partyId,
+    partyType,
+    amount,
+    paymentMethod,
+    remainingAmount,
+  });
+
+  closeGeneralPaymentModal();
+  await Promise.all([
+    loadPayments(),
+    loadAccountsReceivable(),
+    loadAccountsPayable(),
+    loadDashboard(),
+    loadInvoices(),
+  ]);
+}
+
+document.getElementById('generalPaymentForm')?.addEventListener('submit', submitGeneralPayment);
+document.getElementById('closeGeneralPaymentModal')?.addEventListener('click', closeGeneralPaymentModal);
+document.getElementById('generalPaymentModal')?.addEventListener('click', (event) => {
+  if (event.target && event.target.id === 'generalPaymentModal') {
+    closeGeneralPaymentModal();
+  }
+});
+
 document.getElementById('productForm').addEventListener('submit', saveProduct);
 document.getElementById('customerForm').addEventListener('submit', saveCustomer);
 document.getElementById('supplierForm').addEventListener('submit', saveSupplier);
@@ -3448,6 +3669,12 @@ document.addEventListener('click', async (event) => {
       const invoice = (await supabaseClient.from('invoices').select('*').eq('id', id).single()).data;
       if (!invoice) return;
       openPaymentModal(id, 'abono');
+    }
+    if (type === 'open-general-payment') {
+      const partyId = button.dataset.partyId;
+      const partyType = button.dataset.partyType;
+      const invoiceIds = button.dataset.invoiceIds.split(',');
+      await openGeneralPaymentModal(partyId, partyType, invoiceIds);
     }
     if (type === 'edit-invoice-payment') {
       const payment = (await supabaseClient.from('invoice_payments').select('invoice_id').eq('id', id).single()).data;

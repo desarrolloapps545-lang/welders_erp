@@ -444,6 +444,42 @@
           </div>
         </div>
 
+        <div id="generalPaymentModal" class="modal hidden">
+          <div class="modal-content modal-content-small">
+            <div class="modal-header">
+              <h3 id="generalPaymentModalTitle">Abono general</h3>
+              <button type="button" id="closeGeneralPaymentModal" class="secondary-btn">Cerrar</button>
+            </div>
+            <form id="generalPaymentForm" class="row-form payment-form">
+              <input type="hidden" id="generalPartyId" />
+              <input type="hidden" id="generalPartyType" />
+              <input type="hidden" id="generalInvoiceIds" />
+              <div class="general-payment-details">
+                <p id="generalPaymentPartyName" class="credit-balance-available"></p>
+                <div id="generalPaymentInvoicesList" class="general-invoices-list"></div>
+                <div class="general-payment-summary">
+                  <span>Total deuda:</span>
+                  <strong id="generalPaymentTotalDebt">$0</strong>
+                </div>
+                <label>
+                  <span>Monto del abono</span>
+                  <input type="text" id="generalPaymentAmount" placeholder="Ej: 1.000.000" inputmode="decimal" required />
+                </label>
+                <label>
+                  <span>Medio de pago</span>
+                  <select id="generalPaymentMethod">
+                    <option value="EFECTIVO">Efectivo</option>
+                    <option value="TRANSFERENCIA">Transferencia</option>
+                  </select>
+                </label>
+              </div>
+              <div class="modal-actions">
+                <button type="submit" class="primary-btn">Guardar abono</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
         <section id="usersView" class="view">
           <div class="panel">
             <h3>Usuarios</h3>
