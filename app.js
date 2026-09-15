@@ -138,7 +138,7 @@ function resetFormState(form) {
 }
 
 function formatMoney(value) {
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(Number(value || 0));
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
 }
 
 function parseFormattedNumber(value) {
@@ -152,7 +152,7 @@ function parseFormattedNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function formatNumberInput(value, allowDecimal = true) {
+function formatNumberInput(value, allowDecimal = true, useThousandsSeparator = false) {
   if (value === null || value === undefined || value === '') return '';
 
   let raw = String(value).replace(/[^\d,.-]/g, '');
@@ -179,19 +179,33 @@ function formatNumberInput(value, allowDecimal = true) {
 
   if (!integerPart && !decimalPart) return '';
 
-  const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  const decimalSuffix = allowDecimal && decimalPart ? ',' + decimalPart : '';
+  const formattedInteger = useThousandsSeparator ? integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.') : integerPart;
+  const decimalSuffix = allowDecimal && decimalIndex > -1 ? ',' + decimalPart : '';
 
   return `${isNegative ? '-' : ''}${formattedInteger}${decimalSuffix}`;
 }
 
-function applyFormattedNumberListener(elementId, allowDecimal = true, root = document) {
+function applyFormattedNumberListener(elementId, allowDecimal = true, root = document, useThousandsSeparator = false) {
   const element = root && root.querySelector ? root.querySelector(`#${elementId}`) : document.getElementById(elementId);
   if (!element) return;
 
   element.addEventListener('input', (event) => {
-    const formatted = formatNumberInput(event.target.value, allowDecimal);
-    event.target.value = formatted;
+    const target = event.target;
+    const oldValue = target.value;
+    const oldCursor = target.selectionStart;
+    const formatted = formatNumberInput(oldValue, allowDecimal, useThousandsSeparator);
+
+    if (formatted !== oldValue) {
+      const significantBeforeCursor = (oldValue.substring(0, oldCursor).match(/[\d.,-]/g) || []).length;
+      target.value = formatted;
+      let pos = 0;
+      let count = 0;
+      while (pos < formatted.length && count < significantBeforeCursor) {
+        if (/[\d.,-]/.test(formatted[pos])) count++;
+        pos++;
+      }
+      target.setSelectionRange(pos, pos);
+    }
   });
 }
 
@@ -1333,7 +1347,7 @@ function openPaymentModal(invoiceId, mode, paymentId = null) {
     title.textContent = 'Editar pago';
     const { data: payment, error } = supabaseClient.from('invoice_payments').select('amount').eq('id', paymentId).single();
     if (!error && payment) {
-      amountInput.value = formatNumberInput(String(Number(payment.amount || 0)), false);
+      amountInput.value = formatNumberInput(String(Number(payment.amount || 0)), true);
     }
     if (paymentIdInput) paymentIdInput.value = paymentId;
   } else {
@@ -2391,11 +2405,11 @@ async function startEditProduct(id) {
         </label>
         <label>
           <span>Precio de compra</span>
-          <input type="text" id="productPurchasePrice" value="${formatNumberInput(String(Number(data.purchase_price || 0)), false)}" required />
+            <input type="text" id="productPurchasePrice" value="${formatNumberInput(String(Number(data.purchase_price || 0)), true)}" required />
         </label>
         <label>
           <span>Precio de venta</span>
-          <input type="text" id="productSalePrice" value="${formatNumberInput(String(Number(data.sale_price || 0)), false)}" required />
+            <input type="text" id="productSalePrice" value="${formatNumberInput(String(Number(data.sale_price || 0)), true)}" required />
         </label>
         <label>
           <span>Medida</span>
@@ -2417,8 +2431,8 @@ async function startEditProduct(id) {
 
   const form = document.getElementById('editProductForm');
   form?.addEventListener('submit', saveProduct);
-  applyFormattedNumberListener('productPurchasePrice', false, form);
-  applyFormattedNumberListener('productSalePrice', false, form);
+  applyFormattedNumberListener('productPurchasePrice', true, form);
+  applyFormattedNumberListener('productSalePrice', true, form);
 }
 
 async function startEditCustomer(id) {
@@ -2554,7 +2568,7 @@ async function startEditInvoice(id) {
         </label>
         <label>
           <span>Precio unitario</span>
-          <input type="text" id="invoicePrice" value="${formatNumberInput(String(Number(data.unit_price || 0)), false)}" inputmode="decimal" required />
+          <input type="text" id="invoicePrice" value="${formatNumberInput(String(Number(data.unit_price || 0)), true)}" inputmode="decimal" required />
         </label>
         <label>
           <span>Tipo de pago</span>
@@ -2592,7 +2606,7 @@ async function startEditInvoice(id) {
   const form = document.getElementById('editInvoiceForm');
   form?.addEventListener('submit', saveInvoice);
   applyFormattedNumberListener('invoiceQty', false, form);
-  applyFormattedNumberListener('invoicePrice', false, form);
+  applyFormattedNumberListener('invoicePrice', true, form);
   bindInvoiceEditModalBehavior(form);
   syncInvoicePreview(form);
 }
@@ -2824,7 +2838,7 @@ function bindInvoiceEditModalBehavior(form) {
           priceField.value = originalPrice;
         } else if (!priceField || !priceField.value || parseFormattedNumber(priceField.value) === 0) {
           const defaultPrice = typeField?.value === 'PURCHASE' ? Number(data.purchase_price || 0) : Number(data.sale_price || 0);
-          priceField.value = formatNumberInput(String(defaultPrice), false);
+          priceField.value = formatNumberInput(String(defaultPrice), true);
         }
 
         syncInvoicePreview(form);
@@ -2847,7 +2861,7 @@ function bindInvoiceEditModalBehavior(form) {
       if (!isChangingProduct && originalPrice && parseFormattedNumber(originalPrice) > 0) {
         priceField.value = originalPrice;
       } else {
-        priceField.value = formatNumberInput(String(defaultPrice), false);
+        priceField.value = formatNumberInput(String(defaultPrice), true);
       }
     }
     syncInvoicePreview(form);
@@ -2891,7 +2905,7 @@ function bindInvoiceEditModalBehavior(form) {
         return;
       }
 
-      initialPaymentField.value = formatNumberInput(String(credit), false);
+      initialPaymentField.value = formatNumberInput(String(credit), true);
       syncInvoicePreview(form);
     });
   }
@@ -3196,13 +3210,14 @@ document.querySelectorAll('.nav-item').forEach((button) => {
   });
 });
 
-applyFormattedNumberListener('productPurchasePrice', false);
-applyFormattedNumberListener('productSalePrice', false);
+applyFormattedNumberListener('productPurchasePrice', true);
+applyFormattedNumberListener('productSalePrice', true);
 applyFormattedNumberListener('invoiceQty', false);
-applyFormattedNumberListener('invoicePrice', false);
-applyFormattedNumberListener('invoiceInitialPayment', false);
-applyFormattedNumberListener('paymentAmount', false);
-applyFormattedNumberListener('customCreditAmount', false);
+applyFormattedNumberListener('invoicePrice', true);
+applyFormattedNumberListener('invoiceInitialPayment', true);
+applyFormattedNumberListener('paymentAmount', true);
+applyFormattedNumberListener('customCreditAmount', true);
+applyFormattedNumberListener('generalPaymentAmount', true);
 
 ['invoiceQty', 'invoicePrice'].forEach((id) => {
   const element = document.getElementById(id);
@@ -3304,7 +3319,7 @@ document.getElementById('invoiceType').addEventListener('change', async (event) 
     const { data } = await supabaseClient.from('products').select('*').eq('id', productId).single();
     if (data) {
       const defaultPrice = isPurchase ? Number(data.purchase_price || 0) : Number(data.sale_price || 0);
-      document.getElementById('invoicePrice').value = formatNumberInput(String(defaultPrice), false);
+      document.getElementById('invoicePrice').value = formatNumberInput(String(defaultPrice), true);
       syncInvoicePreview();
     }
   }
@@ -3365,7 +3380,7 @@ if (invoiceProduct) {
 
     const type = document.getElementById('invoiceType').value || 'SALE';
     const defaultPrice = type === 'PURCHASE' ? Number(data.purchase_price || 0) : Number(data.sale_price || 0);
-    document.getElementById('invoicePrice').value = formatNumberInput(String(defaultPrice), false);
+    document.getElementById('invoicePrice').value = formatNumberInput(String(defaultPrice), true);
     syncInvoicePreview();
   });
 }
@@ -3443,7 +3458,7 @@ document.getElementById('creditBalanceModal')?.addEventListener('click', (event)
 });
 
 document.getElementById('useAllCreditBtn')?.addEventListener('click', () => {
-  invoiceInitialPaymentField.value = formatNumberInput(String(pendingCreditBalance), false);
+  invoiceInitialPaymentField.value = formatNumberInput(String(pendingCreditBalance), true);
   closeCreditBalanceModal();
 });
 
@@ -3451,7 +3466,7 @@ document.getElementById('useCustomCreditBtn')?.addEventListener('click', () => {
   const customSection = document.getElementById('customCreditAmountSection');
   const customInput = document.getElementById('customCreditAmount');
   customSection.classList.remove('hidden');
-  customInput.value = formatNumberInput(String(pendingCreditBalance), false);
+  customInput.value = formatNumberInput(String(pendingCreditBalance), true);
   setTimeout(() => customInput.focus(), 50);
 });
 
@@ -3464,7 +3479,7 @@ document.getElementById('confirmCustomCreditBtn')?.addEventListener('click', () 
     return;
   }
 
-  invoiceInitialPaymentField.value = formatNumberInput(String(parsedAmount), false);
+  invoiceInitialPaymentField.value = formatNumberInput(String(parsedAmount), true);
   closeCreditBalanceModal();
 });
 

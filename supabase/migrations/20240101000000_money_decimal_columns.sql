@@ -1,0 +1,9 @@
+ALTER TABLE products ALTER COLUMN purchase_price TYPE numeric(14,2) USING purchase_price::numeric;
+ALTER TABLE products ALTER COLUMN sale_price TYPE numeric(14,2) USING sale_price::numeric;
+ALTER TABLE invoices ALTER COLUMN unit_price TYPE numeric(14,2) USING unit_price::numeric;
+ALTER TABLE invoices ALTER COLUMN total TYPE numeric(14,2) USING total::numeric;
+ALTER TABLE invoices ALTER COLUMN paid_amount TYPE numeric(14,2) USING paid_amount::numeric;
+ALTER TABLE invoices ALTER COLUMN balance TYPE numeric(14,2) USING balance::numeric;
+ALTER TABLE invoice_payments ALTER COLUMN amount TYPE numeric(14,2) USING amount::numeric;
+ALTER TABLE customers ALTER COLUMN credit_balance TYPE numeric(14,2) USING credit_balance::numeric;
+ALTER TABLE suppliers ALTER COLUMN credit_balance TYPE numeric(14,2) USING credit_balance::numeric;
