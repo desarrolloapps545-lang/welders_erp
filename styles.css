@@ -1087,3 +1087,43 @@ button, input, select {
     padding-top: 70px;
   }
 }
+
+.table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-wrapper table {
+  min-width: 1100px;
+}
+
+.actions-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-width: 180px;
+}
+
+.actions-cell button {
+  flex-shrink: 0;
+}
+
+.actions-cell .secondary-action-btn {
+  padding: 4px 6px;
+  font-size: 0.6rem;
+}
+
+.actions-cell .action-btn {
+  padding: 4px 8px;
+  font-size: 0.6rem;
+}
+
+.actions-cell svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}

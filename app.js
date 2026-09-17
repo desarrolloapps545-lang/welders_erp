@@ -141,6 +141,60 @@ function formatMoney(value) {
   return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
 }
 
+function numberToWords(num) {
+  const units = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'];
+  const teens = ['diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete', 'dieciocho', 'diecinueve'];
+  const tens = ['', '', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa'];
+  const hundreds = ['', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos'];
+
+  function convertHundreds(n) {
+    if (n === 0) return '';
+    if (n === 100) return 'cien';
+    let result = '';
+    if (n >= 100) {
+      result += hundreds[Math.floor(n / 100)] + ' ';
+      n %= 100;
+    }
+    if (n >= 20) {
+      if (n === 20) return result + 'veinte';
+      if (n < 30) return result + 'veinti' + units[n - 20];
+      result += tens[Math.floor(n / 10)];
+      n %= 10;
+      if (n > 0) result += ' y ' + units[n];
+    } else if (n >= 10) {
+      result += teens[n - 10];
+    } else if (n > 0) {
+      result += units[n];
+    }
+    return result.trim();
+  }
+
+  if (num === 0) return 'cero pesos';
+
+  const billions = Math.floor(num / 1000000000);
+  num %= 1000000000;
+  const millions = Math.floor(num / 1000000);
+  num %= 1000000;
+  const thousands = Math.floor(num / 1000);
+  const rest = num % 1000;
+
+  let words = '';
+  if (billions > 0) {
+    words += convertHundreds(billions) + (billions === 1 ? ' mil millones ' : ' mil millones ');
+  }
+  if (millions > 0) {
+    words += convertHundreds(millions) + (millions === 1 ? ' millón ' : ' millones ');
+  }
+  if (thousands > 0) {
+    words += convertHundreds(thousands) + (thousands === 1 ? ' mil ' : ' mil ');
+  }
+  if (rest > 0 || words === '') {
+    words += convertHundreds(rest);
+  }
+
+  return words.trim() + ' pesos';
+}
+
 function parseFormattedNumber(value) {
   if (value === null || value === undefined || value === '') return 0;
   const normalized = String(value)
@@ -1238,7 +1292,9 @@ async function loadInvoices() {
       <td>${paymentTypeLabel}</td>
       <td>${paymentMethodLabel}</td>
       <td>${formatDate(invoice.created_at)}</td>
-      <td>
+      <td class="actions-cell">
+        <button class="secondary-action-btn" data-id="${invoice.id}" data-type="download-invoice-pdf" title="Descargar PDF"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+        <button class="secondary-action-btn" data-id="${invoice.id}" data-type="download-invoice-excel" title="Descargar Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
         <button class="secondary-action-btn" data-id="${invoice.id}" data-type="edit-invoice">Editar</button>
         <button class="action-btn" data-id="${invoice.id}" data-type="delete-invoice">Eliminar</button>
       </td>
@@ -2999,10 +3055,14 @@ async function downloadInvoiceExcel() {
   const suppliers = await supabaseClient.from('suppliers').select('*');
   const products = await supabaseClient.from('products').select('*');
   const payments = await supabaseClient.from('invoice_payments').select('*');
+  const saleRepresents = await supabaseClient.from('sale_represent').select('*').limit(1);
+  const companyData = await supabaseClient.from('welders_industry').select('*').limit(1);
 
   const customerMap = new Map((customers.data || []).map((c) => [c.id, c]));
   const supplierMap = new Map((suppliers.data || []).map((s) => [s.id, s]));
   const productMap = new Map((products.data || []).map((p) => [p.id, p]));
+  const saleRep = saleRepresents.data && saleRepresents.data[0] ? saleRepresents.data[0] : null;
+  const company = companyData.data && companyData.data[0] ? companyData.data[0] : null;
   const paymentsByInvoice = new Map();
 
   (payments.data || []).forEach((payment) => {
@@ -3032,132 +3092,1144 @@ async function downloadInvoiceExcel() {
 
   const wb = XLSX.utils.book_new();
 
-  const operacionesHeader = ['Id operacion', 'Fecha', 'Remisión', 'Unidades', 'Producto', 'Precio de compra', 'Total de compra', 'Saldo pendiente', 'Metodo de pago', 'Observacion'];
+  // Hoja 1: Resumen general de operaciones
+  const operacionesHeader = ['Factura', 'Fecha', 'Tipo', 'Cliente/Proveedor', 'Remisión', 'Producto', 'Cantidad', 'Precio Unit.', 'Total', 'Tipo Pago', 'Método Pago', 'Estado', 'Saldo Pendiente'];
   const operacionesData = [operacionesHeader];
 
   filteredInvoices.forEach((invoice) => {
     const product = productMap.get(invoice.product_id);
     const measure = product?.measure || 'und';
     const productName = product?.name || '';
+    const partyName = invoice.type === 'PURCHASE'
+      ? (supplierMap.get(invoice.supplier_id)?.name || 'Proveedor')
+      : (customerMap.get(invoice.customer_id)?.name || 'Cliente');
     const paymentMethodLabel = invoice.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+    const paymentTypeLabel = invoice.payment_type === 'ABONO' ? 'Abono' : 'Pago total';
+    const typeLabel = invoice.type === 'PURCHASE' ? 'Compra' : 'Venta';
     const saldoPendiente = Number(invoice.balance || 0);
 
     operacionesData.push([
       invoice.invoice_number || '',
       formatDate(invoice.created_at),
+      typeLabel,
+      partyName,
       invoice.operation_reference || '',
-      `${invoice.quantity ?? 0} ${measure}`,
       productName,
+      `${invoice.quantity ?? 0} ${measure}`,
       Number(invoice.unit_price || 0),
       Number(invoice.total || 0),
-      saldoPendiente,
+      paymentTypeLabel,
       paymentMethodLabel,
-      invoice.note || '',
+      invoice.status === 'PAID' ? 'Pagada' : 'Pendiente',
+      saldoPendiente,
     ]);
   });
 
   const operacionesSheet = XLSX.utils.aoa_to_sheet(operacionesData);
   operacionesSheet['!cols'] = [
-    { wch: 15 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 },
-    { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 18 }, { wch: 25 },
+    { wch: 15 }, { wch: 12 }, { wch: 10 }, { wch: 20 }, { wch: 15 },
+    { wch: 20 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 15 },
   ];
 
   for (let j = 0; j < operacionesHeader.length; j++) {
     const cellRef = XLSX.utils.encode_cell({ r: 0, c: j });
     if (operacionesSheet[cellRef]) {
       operacionesSheet[cellRef].s = {
-        font: { bold: true },
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
         alignment: { horizontal: 'center', vertical: 'center' },
+        fill: { fgColor: { rgb: '1E40AF' } },
       };
     }
   }
 
-  XLSX.utils.book_append_sheet(wb, operacionesSheet, 'Operaciones');
+  XLSX.utils.book_append_sheet(wb, operacionesSheet, 'Resumen Operaciones');
 
+  // Hoja 2: Detalle de cada factura con estructura mejorada
   for (const invoice of filteredInvoices) {
     const invoicePayments = paymentsByInvoice.get(invoice.id) || [];
     const invoiceTotal = Number(invoice.total || 0);
     const product = productMap.get(invoice.product_id);
     const measure = product?.measure || 'und';
     const productName = product?.name || '';
+    const partyName = invoice.type === 'PURCHASE'
+      ? (supplierMap.get(invoice.supplier_id)?.name || 'Proveedor')
+      : (customerMap.get(invoice.customer_id)?.name || 'Cliente');
     const paymentMethodLabel = invoice.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
-    const saldoPendiente = Number(invoice.balance || 0);
+    const paymentTypeLabel = invoice.payment_type === 'ABONO' ? 'Abono' : 'Pago total';
+    const typeLabel = invoice.type === 'PURCHASE' ? 'Compra' : 'Venta';
+    const operationLabel = getInvoiceOperationLabel(invoice);
 
-    const sheetName = `Op ${invoice.invoice_number || invoice.id}`.substring(0, 31);
-    const sheetData = [];
+    const sheetName = `F${invoice.invoice_number || invoice.id}`.substring(0, 31);
 
-    sheetData.push([`Operacion ${invoice.invoice_number || ''}`]);
-    sheetData.push([]);
+    // Información general
+    const infoData = [
+      ['Campo', 'Valor'],
+      ['Empresa', 'Welders'],
+      ['Fecha', formatDate(invoice.created_at)],
+      ['Tipo', typeLabel],
+      ['Factura', invoice.invoice_number || 'N/A'],
+      ['Tipo de operación', operationLabel],
+      ['Remisión', invoice.operation_reference || '-'],
+      [invoice.type === 'PURCHASE' ? 'Proveedor' : 'Cliente', partyName],
+      ['Estado', invoice.status === 'PAID' ? 'Pagada' : 'Pendiente'],
+    ];
 
-    sheetData.push(['Fecha', 'Producto', 'Total factura', 'Remisión', 'Precio de compra', 'Unidades', 'Saldo pendiente', 'Metodo de pago']);
-    sheetData.push([
-      formatDate(invoice.created_at),
-      productName,
-      invoiceTotal,
-      invoice.operation_reference || '',
-      Number(invoice.unit_price || 0),
-      `${invoice.quantity ?? 0} ${measure}`,
-      saldoPendiente,
-      paymentMethodLabel,
-    ]);
-
-    sheetData.push([]);
-    const pagoTitleRow = sheetData.length;
-    sheetData.push([`Pago a operacion ${invoice.invoice_number || ''}`]);
-    sheetData.push([]);
-
-    const paymentHeaderRow = sheetData.length;
-    if (invoicePayments.length > 0) {
-      sheetData.push(['Fecha', 'Id operacion', 'Remisión', 'Medio de pago', 'Valor', 'Excedente']);
-      invoicePayments.forEach((payment) => {
-        const paymentValue = Number(payment.amount || 0);
-        const excedente = paymentValue > invoiceTotal ? paymentValue - invoiceTotal : 0;
-        sheetData.push([
-          formatDate(payment.created_at),
-          invoice.invoice_number || '',
-          invoice.operation_reference || '',
-          payment.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo',
-          paymentValue,
-          excedente > 0 ? excedente : '',
-        ]);
-      });
-    } else {
-      sheetData.push(['No hay pagos registrados para esta factura.']);
+    if (invoice.note) {
+      infoData.push(['Observación', invoice.note]);
     }
 
-    const paymentSheet = XLSX.utils.aoa_to_sheet(sheetData);
-
-    paymentSheet['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
-      { s: { r: pagoTitleRow, c: 0 }, e: { r: pagoTitleRow, c: 7 } },
+    // Detalle de productos
+    const productData = [
+      ['Remisión', 'Producto', 'Cantidad', 'Precio Unit.', 'Total'],
+      [
+        invoice.operation_reference || '-',
+        productName,
+        `${invoice.quantity ?? 0} ${measure}`,
+        Number(invoice.unit_price || 0),
+        Number(invoice.total || 0),
+      ],
     ];
 
-    paymentSheet['!cols'] = [
-      { wch: 22 }, { wch: 20 }, { wch: 16 }, { wch: 15 }, { wch: 16 },
-      { wch: 14 }, { wch: 14 }, { wch: 16 },
+    // Totales
+    const totalPaid = Number(invoice.paid_amount || 0);
+    const balance = Number(invoice.balance || 0);
+
+    const totalsData = [
+      ['Concepto', 'Valor'],
+      ['Total Factura', invoiceTotal],
+      ['Tipo de pago', paymentTypeLabel],
+      ['Método de pago', paymentMethodLabel],
+      ['Total Pagado', totalPaid],
+      ['Saldo Pendiente', balance],
     ];
 
-    for (let i = 0; i < sheetData.length; i++) {
-      const row = sheetData[i];
-      for (let j = 0; j < row.length; j++) {
-        const cellRef = XLSX.utils.encode_cell({ r: i, c: j });
-        if (paymentSheet[cellRef]) {
-          paymentSheet[cellRef].s = {
-            font: { bold: i === 0 || i === pagoTitleRow || i === 2 || i === paymentHeaderRow },
+    // Combinar todo en una sola hoja por factura
+    const combinedData = [
+      ...infoData,
+      [],
+      ['Detalle de Productos'],
+      ...productData,
+      [],
+      ['Resumen de Totales'],
+      ...totalsData,
+    ];
+
+    if (invoicePayments.length > 0) {
+      combinedData.push(
+        [],
+        ['Historial de Pagos'],
+        ['Fecha', 'Tipo', 'Método', 'Monto'],
+        ...invoicePayments.map((payment) => [
+          formatDate(payment.created_at),
+          payment.payment_type === 'TOTAL' ? 'Pago total' : 'Abono',
+          payment.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo',
+          Number(payment.amount || 0),
+        ])
+      );
+    }
+
+    const combinedSheet = XLSX.utils.aoa_to_sheet(combinedData);
+    combinedSheet['!cols'] = [
+      { wch: 25 }, { wch: 30 },
+    ];
+
+    // Aplicar estilos a las cabeceras de cada sección
+    let currentRow = 0;
+    const headerRows = [0, infoData.length + 1, infoData.length + 4, infoData.length + 4 + productData.length + 1];
+
+    headerRows.forEach(rowIdx => {
+      for (let j = 0; j < 2; j++) {
+        const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: j });
+        if (combinedSheet[cellRef]) {
+          combinedSheet[cellRef].s = {
+            font: { bold: true, color: { rgb: 'FFFFFF' } },
             alignment: { horizontal: 'center', vertical: 'center' },
+            fill: { fgColor: { rgb: '1E40AF' } },
+          };
+        }
+      }
+    });
+
+    // Estilo para la cabecera de productos (5 columnas)
+    const productHeaderRow = infoData.length + 4;
+    for (let j = 0; j < 5; j++) {
+      const cellRef = XLSX.utils.encode_cell({ r: productHeaderRow, c: j });
+      if (combinedSheet[cellRef]) {
+        combinedSheet[cellRef].s = {
+          font: { bold: true, color: { rgb: 'FFFFFF' } },
+          alignment: { horizontal: 'center', vertical: 'center' },
+          fill: { fgColor: { rgb: '1E40AF' } },
+        };
+      }
+    }
+
+    // Estilo para la cabecera de pagos si existe
+    if (invoicePayments.length > 0) {
+      const paymentHeaderRow = combinedData.length - invoicePayments.length - 1;
+      for (let j = 0; j < 4; j++) {
+        const cellRef = XLSX.utils.encode_cell({ r: paymentHeaderRow, c: j });
+        if (combinedSheet[cellRef]) {
+          combinedSheet[cellRef].s = {
+            font: { bold: true, color: { rgb: 'FFFFFF' } },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            fill: { fgColor: { rgb: '1E40AF' } },
           };
         }
       }
     }
 
-    XLSX.utils.book_append_sheet(wb, paymentSheet, sheetName);
+    XLSX.utils.book_append_sheet(wb, combinedSheet, sheetName);
   }
 
-  XLSX.writeFile(wb, `Facturas_${new Date().toISOString().split('T')[0]}.xlsx`);
+  XLSX.writeFile(wb, `Facturas_Welders_${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+
+async function downloadInvoicePdf() {
+  const invoiceSearch = document.getElementById('invoiceListSearch')?.value || '';
+  const operationFilter = document.getElementById('invoiceOperationFilter')?.value || 'all';
+  const partyTypeFilter = document.getElementById('invoicePartyTypeFilter')?.value || 'all';
+  const partyFilter = document.getElementById('invoicePartyFilter')?.value || '';
+
+  const { data: invoices, error } = await supabaseClient
+    .from('invoices')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    alert('Error al cargar las facturas: ' + error.message);
+    return;
+  }
+
+  if (!invoices || invoices.length === 0) {
+    alert('No hay facturas para exportar.');
+    return;
+  }
+
+  const customers = await supabaseClient.from('customers').select('*');
+  const suppliers = await supabaseClient.from('suppliers').select('*');
+  const products = await supabaseClient.from('products').select('*');
+  const payments = await supabaseClient.from('invoice_payments').select('*');
+  const saleRepresents = await supabaseClient.from('sale_represent').select('*').limit(1);
+  const companyData = await supabaseClient.from('welders_industry').select('*').limit(1);
+
+  const customerMap = new Map((customers.data || []).map((c) => [c.id, c]));
+  const supplierMap = new Map((suppliers.data || []).map((s) => [s.id, s]));
+  const productMap = new Map((products.data || []).map((p) => [p.id, p]));
+  const saleRep = saleRepresents.data && saleRepresents.data[0] ? saleRepresents.data[0] : null;
+  const company = companyData.data && companyData.data[0] ? companyData.data[0] : null;
+  const paymentsByInvoice = new Map();
+
+  (payments.data || []).forEach((payment) => {
+    if (!paymentsByInvoice.has(payment.invoice_id)) {
+      paymentsByInvoice.set(payment.invoice_id, []);
+    }
+    paymentsByInvoice.get(payment.invoice_id).push(payment);
+  });
+
+  const filteredInvoices = (invoices || []).filter((invoice) => {
+    const searchTerm = invoiceSearch.trim().toLowerCase();
+    const matchesSearch = !searchTerm ||
+      (invoice.invoice_number || '').toLowerCase().includes(searchTerm) ||
+      (invoice.operation_reference || '').toLowerCase().includes(searchTerm);
+
+    const matchesType = operationFilter === 'all' || invoice.type === operationFilter;
+
+    let matchesParty = true;
+    if (partyTypeFilter === 'CLIENTE') {
+      matchesParty = invoice.type === 'SALE' && invoice.customer_id === partyFilter;
+    } else if (partyTypeFilter === 'PROVEEDOR') {
+      matchesParty = invoice.type === 'PURCHASE' && invoice.supplier_id === partyFilter;
+    }
+
+    return matchesSearch && matchesType && matchesParty;
+  });
+
+  if (filteredInvoices.length === 0) {
+    alert('No hay facturas que coincidan con los filtros.');
+    return;
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  const companyName = 'Welders';
+  const logoPath = './img/welders_logo.png';
+
+  let logoBase64 = '';
+  try {
+    const response = await fetch(logoPath);
+    const blob = await response.blob();
+    logoBase64 = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.warn('No se pudo cargar el logo:', e);
+  }
+
+  filteredInvoices.forEach((invoice, index) => {
+    if (index > 0) {
+      doc.addPage();
+    }
+
+    const product = productMap.get(invoice.product_id);
+    const measure = product?.measure || 'und';
+    const productName = product?.name || '';
+    const party = invoice.type === 'PURCHASE'
+      ? supplierMap.get(invoice.supplier_id)
+      : customerMap.get(invoice.customer_id);
+    const partyName = party?.name || (invoice.type === 'PURCHASE' ? 'Proveedor' : 'Cliente');
+    const paymentMethodLabel = invoice.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+    const paymentTypeLabel = invoice.payment_type === 'ABONO' ? 'Abono' : 'Pago total';
+    const typeLabel = invoice.type === 'PURCHASE' ? 'Compra' : 'Venta';
+    const operationLabel = getInvoiceOperationLabel(invoice);
+    const invoicePayments = paymentsByInvoice.get(invoice.id) || [];
+
+    let y = 15;
+
+    // Encabezado: Logo a la izquierda, datos de la empresa centrados al lado
+    if (logoBase64) {
+      doc.addImage(logoBase64, 'PNG', 14, y, 60, 15);
+    }
+
+    // Helper to get property case-insensitively
+    const getProp = (obj, ...keys) => {
+      if (!obj) return '';
+      for (const key of keys) {
+        if (obj[key] !== undefined && obj[key] !== null && obj[key] !== '') return obj[key];
+      }
+      return '';
+    };
+
+    // Datos de la empresa (welders_industry) centrados al lado del logo
+    if (company) {
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(0, 0, 0);
+      const companyLines = [
+        getProp(company, 'nombre', 'Nombre'),
+        getProp(company, 'nit', 'NIT', 'Nit'),
+        getProp(company, 'direccion', 'Direccion', 'Dirección', 'dirección'),
+        getProp(company, 'celular', 'Celular'),
+        getProp(company, 'correo', 'Correo'),
+      ].filter(Boolean);
+      const logoRightX = 14 + 60;
+      const pageRightX = 196;
+      const centerX = logoRightX + (pageRightX - logoRightX) / 2;
+      companyLines.forEach((line, i) => {
+        doc.text(line, centerX, y + 5 + i * 5, { align: 'center' });
+      });
+    }
+
+    y += 30;
+
+    doc.setDrawColor(150, 150, 150);
+    doc.setLineWidth(0.5);
+    doc.line(14, y, 196, y);
+    y += 8;
+
+    doc.setFontSize(16);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(`${typeLabel} - Factura #${String(invoice.invoice_number || '0').padStart(4, '0')}`, 14, y);
+    y += 12;
+
+    // Información del cliente/proveedor (columna izquierda) e Información del documento (columna derecha)
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(invoice.type === 'PURCHASE' ? 'Datos del Proveedor' : 'Datos del Cliente', 14, y);
+    doc.text('Información del Documento', 110, y);
+    y += 8;
+
+    const partyDetails = [
+      ['Nombre', partyName],
+      ['Tipo de operación', operationLabel],
+      ['Remisión', invoice.operation_reference || '-'],
+      ['Fecha', formatDate(invoice.created_at)],
+    ];
+
+    if (invoice.note) {
+      partyDetails.push(['Observación', invoice.note]);
+    }
+
+    // Fecha de generación con hora en formato 12h
+    const now = new Date();
+    const genDate = now.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const genTime = now.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    const docDetails = [
+      ['Fecha de generación', `${genDate} ${genTime}`],
+      ['Fecha', formatDate(invoice.created_at)],
+      ['Forma de pago', paymentTypeLabel],
+      ['Medio de pago', paymentMethodLabel],
+    ];
+
+    // Tabla de cliente (izquierda) y documento (derecha) lado a lado
+    doc.autoTable({
+      startY: y,
+      body: partyDetails,
+      theme: 'plain',
+      bodyStyles: {
+        fontSize: 9,
+        textColor: [0, 0, 0],
+      },
+      columnStyles: {
+        0: { fontStyle: 'normal', cellWidth: 45 },
+        1: { cellWidth: 55, fontStyle: 'normal' },
+      },
+      rowStyles: {
+        0: { cells: { 1: { fontStyle: 'bold' } } },
+      },
+      margin: { left: 14, right: 110 },
+      tableLineColor: [255, 255, 255],
+      tableLineWidth: 0,
+    });
+
+    const clientTableEndY = doc.lastAutoTable.finalY;
+
+    doc.autoTable({
+      startY: y,
+      body: docDetails,
+      theme: 'plain',
+      bodyStyles: {
+        fontSize: 9,
+        textColor: [0, 0, 0],
+      },
+      columnStyles: {
+        0: { fontStyle: 'normal', cellWidth: 55 },
+        1: { cellWidth: 27, fontStyle: 'normal' },
+      },
+      margin: { left: 110, right: 14 },
+      tableLineColor: [255, 255, 255],
+      tableLineWidth: 0,
+    });
+
+    y = Math.max(clientTableEndY, doc.lastAutoTable.finalY) + 10;
+
+    // Representante de ventas
+    if (saleRep) {
+      doc.setFontSize(11);
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(0, 0, 0);
+      doc.text('Representante de Ventas', 14, y);
+      y += 8;
+
+      const repDetails = [
+        ['Nombre', getProp(saleRep, 'nombre', 'Nombre')],
+        ['Email', getProp(saleRep, 'correo', 'Correo')],
+        ['Teléfono', getProp(saleRep, 'celular', 'Celular')],
+      ].filter(([, value]) => value);
+
+      if (repDetails.length > 0) {
+        doc.autoTable({
+          startY: y,
+          body: repDetails,
+          theme: 'plain',
+          bodyStyles: {
+            fontSize: 9,
+            textColor: [0, 0, 0],
+          },
+          columnStyles: {
+            0: { fontStyle: 'normal', cellWidth: 35 },
+            1: { cellWidth: 'auto', fontStyle: 'normal' },
+          },
+          margin: { left: 14, right: 14 },
+          tableLineColor: [255, 255, 255],
+          tableLineWidth: 0,
+        });
+
+        y = doc.lastAutoTable.finalY + 10;
+      }
+    }
+
+    // Tabla de productos
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text('Detalle de Productos', 14, y);
+    y += 8;
+
+    const productTableData = [[
+      'Remisión',
+      'Producto',
+      'Cantidad',
+      'Precio Unit.',
+      'Total'
+    ], [
+      invoice.operation_reference || '-',
+      productName,
+      `${invoice.quantity ?? 0} ${measure}`,
+      formatMoney(invoice.unit_price || 0),
+      formatMoney(invoice.total || 0)
+    ]];
+
+    doc.autoTable({
+      startY: y,
+      head: [productTableData[0]],
+      body: [productTableData[1]],
+      theme: 'plain',
+      headStyles: {
+        fillColor: [240, 240, 240],
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        fontSize: 9,
+        halign: 'center',
+      },
+      bodyStyles: {
+        fontSize: 9,
+        textColor: [0, 0, 0],
+      },
+      columnStyles: {
+        0: { cellWidth: 30 },
+        1: { cellWidth: 60 },
+        2: { cellWidth: 25, halign: 'center' },
+        3: { cellWidth: 35, halign: 'center' },
+        4: { cellWidth: 35, halign: 'center' },
+      },
+      margin: { left: 14, right: 14 },
+      tableLineColor: [200, 200, 200],
+      tableLineWidth: 0.1,
+    });
+
+    y = doc.lastAutoTable.finalY + 10;
+
+    // Resumen de totales
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    const totalAmount = Number(invoice.total || 0);
+    const totalItems = 1; // Cada factura tiene 1 línea de producto en este sistema
+
+    const totalsData = [
+      ['Total items', totalItems.toString()],
+      ['Total Factura', formatMoney(totalAmount)],
+    ];
+
+    doc.autoTable({
+      startY: y,
+      body: totalsData,
+      theme: 'plain',
+      bodyStyles: {
+        fontSize: 9,
+        textColor: [0, 0, 0],
+      },
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 50 },
+        1: { cellWidth: 'auto', halign: 'right' },
+      },
+      margin: { left: 14, right: 14 },
+      tableLineColor: [255, 255, 255],
+      tableLineWidth: 0,
+    });
+
+    // Valor en letras - solo título en negrita
+    y = doc.lastAutoTable.finalY + 5;
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text('Valor en letras:', 14, y);
+    doc.setFont(undefined, 'normal');
+    const valorLetras = numberToWords(Math.round(totalAmount)).toUpperCase();
+    doc.text(valorLetras, doc.getTextWidth('Valor en letras:') + 18, y);
+    y += 10;
+
+    // Historial de pagos
+    if (invoicePayments.length > 0) {
+      doc.setFontSize(11);
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(0, 0, 0);
+      doc.text('Historial de Pagos', 14, y);
+      y += 8;
+
+      const paymentData = invoicePayments.map((payment) => [
+        formatDate(payment.created_at),
+        payment.payment_type === 'TOTAL' ? 'Pago total' : 'Abono',
+        payment.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo',
+        formatMoney(payment.amount || 0),
+      ]);
+
+      doc.autoTable({
+        startY: y,
+        head: [['Fecha', 'Tipo', 'Método', 'Monto']],
+        body: paymentData,
+        theme: 'plain',
+        headStyles: {
+          fillColor: [240, 240, 240],
+          textColor: [0, 0, 0],
+          fontStyle: 'bold',
+          fontSize: 9,
+        },
+        bodyStyles: {
+          fontSize: 9,
+          textColor: [0, 0, 0],
+        },
+        columnStyles: {
+          0: { cellWidth: 35 },
+          1: { cellWidth: 35 },
+          2: { cellWidth: 35 },
+          3: { cellWidth: 35, halign: 'right' },
+        },
+        margin: { left: 14, right: 14 },
+        tableLineColor: [255, 255, 255],
+        tableLineWidth: 0,
+      });
+
+      y = doc.lastAutoTable.finalY + 10;
+    }
+
+    if (index < filteredInvoices.length - 1) {
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.3);
+      doc.line(14, y + 10, 196, y + 10);
+    }
+  });
+
+  const fileName = `Facturas_${companyName}_${new Date().toISOString().split('T')[0]}.pdf`;
+  doc.save(fileName);
+}
+
+async function downloadSingleInvoicePdf(invoiceId) {
+  const { data: invoices, error } = await supabaseClient
+    .from('invoices')
+    .select('*')
+    .eq('id', invoiceId)
+    .single();
+
+  if (error || !invoices) {
+    alert('Error al cargar la factura: ' + (error?.message || 'No encontrada'));
+    return;
+  }
+
+  const [customers, suppliers, products, payments, saleRepresents, companyData] = await Promise.all([
+    supabaseClient.from('customers').select('*'),
+    supabaseClient.from('suppliers').select('*'),
+    supabaseClient.from('products').select('*'),
+    supabaseClient.from('invoice_payments').select('*').eq('invoice_id', invoiceId),
+    supabaseClient.from('sale_represent').select('*').limit(1),
+    supabaseClient.from('welders_industry').select('*').limit(1),
+  ]);
+
+  const customerMap = new Map((customers.data || []).map((c) => [c.id, c]));
+  const supplierMap = new Map((suppliers.data || []).map((s) => [s.id, s]));
+  const productMap = new Map((products.data || []).map((p) => [p.id, p]));
+  const saleRep = saleRepresents.data && saleRepresents.data[0] ? saleRepresents.data[0] : null;
+  const company = companyData.data && companyData.data[0] ? companyData.data[0] : null;
+
+  const invoice = invoices;
+  const product = productMap.get(invoice.product_id);
+  const measure = product?.measure || 'und';
+  const productName = product?.name || '';
+  const party = invoice.type === 'PURCHASE'
+    ? supplierMap.get(invoice.supplier_id)
+    : customerMap.get(invoice.customer_id);
+  const partyName = party?.name || (invoice.type === 'PURCHASE' ? 'Proveedor' : 'Cliente');
+  const paymentMethodLabel = invoice.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+  const paymentTypeLabel = invoice.payment_type === 'ABONO' ? 'Abono' : 'Pago total';
+  const typeLabel = invoice.type === 'PURCHASE' ? 'Compra' : 'Venta';
+  const operationLabel = getInvoiceOperationLabel(invoice);
+  const invoicePayments = payments.data || [];
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  const companyName = 'Welders';
+  const logoPath = './img/welders_logo.png';
+
+  let logoBase64 = '';
+  try {
+    const response = await fetch(logoPath);
+    const blob = await response.blob();
+    logoBase64 = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.warn('No se pudo cargar el logo:', e);
+  }
+
+let y = 15;
+
+  // Helper to get property case-insensitively
+  const getProp = (obj, ...keys) => {
+    if (!obj) return '';
+    for (const key of keys) {
+      if (obj[key] !== undefined && obj[key] !== null && obj[key] !== '') return obj[key];
+    }
+    return '';
+  };
+
+  if (logoBase64) {
+    doc.addImage(logoBase64, 'PNG', 14, y, 60, 15);
+  }
+
+  // Datos de la empresa (welders_industry) centrados al lado del logo
+  if (company) {
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    const companyLines = [
+      getProp(company, 'nombre', 'Nombre'),
+      getProp(company, 'nit', 'NIT', 'Nit'),
+      getProp(company, 'direccion', 'Direccion', 'Dirección', 'dirección'),
+      getProp(company, 'celular', 'Celular'),
+      getProp(company, 'correo', 'Correo'),
+    ].filter(Boolean);
+    const logoRightX = 14 + 60;
+    const pageRightX = 196;
+    const centerX = logoRightX + (pageRightX - logoRightX) / 2;
+    companyLines.forEach((line, i) => {
+      doc.text(line, centerX, y + 5 + i * 5, { align: 'center' });
+    });
+  }
+
+  y += 30;
+
+  doc.setDrawColor(150, 150, 150);
+  doc.setLineWidth(0.5);
+  doc.line(14, y, 196, y);
+  y += 8;
+
+  doc.setFontSize(16);
+  doc.setFont(undefined, 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text(`${typeLabel} - Factura #${invoice.invoice_number || 'N/A'}`, 14, y);
+  y += 12;
+
+  // Información del cliente/proveedor (columna izquierda) e Información del documento (columna derecha)
+  doc.setFontSize(11);
+  doc.setFont(undefined, 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text(invoice.type === 'PURCHASE' ? 'Datos del Proveedor' : 'Datos del Cliente', 14, y);
+  doc.text('Información del Documento', 110, y);
+  y += 8;
+
+  const partyDetails = [
+    ['Nombre', partyName],
+    ['Tipo de operación', operationLabel],
+    ['Remisión', invoice.operation_reference || '-'],
+    ['Fecha', formatDate(invoice.created_at)],
+  ];
+
+  if (invoice.note) {
+    partyDetails.push(['Observación', invoice.note]);
+  }
+
+  // Fecha de generación con hora en formato 12h
+  const now = new Date();
+  const genDate = now.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const genTime = now.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  const docDetails = [
+    ['Fecha de generación', `${genDate} ${genTime}`],
+    ['Fecha', formatDate(invoice.created_at)],
+    ['Forma de pago', paymentTypeLabel],
+    ['Medio de pago', paymentMethodLabel],
+  ];
+
+  // Tabla de cliente (izquierda) y documento (derecha) lado a lado
+  doc.autoTable({
+    startY: y,
+    body: partyDetails,
+    theme: 'plain',
+    bodyStyles: {
+      fontSize: 9,
+      textColor: [0, 0, 0],
+    },
+    columnStyles: {
+      0: { fontStyle: 'normal', cellWidth: 45 },
+      1: { cellWidth: 55, fontStyle: 'normal' },
+    },
+    rowStyles: {
+      0: { cells: { 1: { fontStyle: 'bold' } } },
+    },
+    margin: { left: 14, right: 110 },
+    tableLineColor: [255, 255, 255],
+    tableLineWidth: 0,
+  });
+
+  const clientTableEndY = doc.lastAutoTable.finalY;
+
+  doc.autoTable({
+    startY: y,
+    body: docDetails,
+    theme: 'plain',
+    bodyStyles: {
+      fontSize: 9,
+      textColor: [0, 0, 0],
+    },
+    columnStyles: {
+      0: { fontStyle: 'normal', cellWidth: 55 },
+      1: { cellWidth: 27, fontStyle: 'normal' },
+    },
+    margin: { left: 110, right: 14 },
+    tableLineColor: [255, 255, 255],
+    tableLineWidth: 0,
+  });
+
+  y = Math.max(clientTableEndY, doc.lastAutoTable.finalY) + 10;
+
+  // Representante de ventas
+  if (saleRep) {
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text('Representante de Ventas', 14, y);
+    y += 8;
+
+    const repDetails = [
+      ['Nombre', getProp(saleRep, 'nombre', 'Nombre')],
+      ['Email', getProp(saleRep, 'correo', 'Correo')],
+      ['Teléfono', getProp(saleRep, 'celular', 'Celular')],
+    ].filter(([, value]) => value);
+
+    if (repDetails.length > 0) {
+      doc.autoTable({
+        startY: y,
+        body: repDetails,
+        theme: 'plain',
+        bodyStyles: {
+          fontSize: 9,
+          textColor: [0, 0, 0],
+        },
+        columnStyles: {
+          0: { fontStyle: 'normal', cellWidth: 35 },
+          1: { cellWidth: 'auto', fontStyle: 'normal' },
+        },
+        margin: { left: 14, right: 14 },
+        tableLineColor: [255, 255, 255],
+        tableLineWidth: 0,
+      });
+
+      y = doc.lastAutoTable.finalY + 10;
+    }
+  }
+
+  // Tabla de productos
+  doc.setFontSize(11);
+  doc.setFont(undefined, 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text('Detalle de Productos', 14, y);
+  y += 8;
+
+  const productTableData = [[
+    'Remisión',
+    'Producto',
+    'Cantidad',
+    'Precio Unit.',
+    'Total'
+  ], [
+    invoice.operation_reference || '-',
+    productName,
+    `${invoice.quantity ?? 0} ${measure}`,
+    formatMoney(invoice.unit_price || 0),
+    formatMoney(invoice.total || 0)
+  ]];
+
+  doc.autoTable({
+    startY: y,
+    head: [productTableData[0]],
+    body: [productTableData[1]],
+    theme: 'plain',
+    headStyles: {
+      fillColor: [240, 240, 240],
+      textColor: [0, 0, 0],
+      fontStyle: 'bold',
+      fontSize: 9,
+      halign: 'center',
+    },
+    bodyStyles: {
+      fontSize: 9,
+      textColor: [0, 0, 0],
+    },
+    columnStyles: {
+      0: { cellWidth: 30 },
+      1: { cellWidth: 60 },
+      2: { cellWidth: 25, halign: 'center' },
+      3: { cellWidth: 35, halign: 'center' },
+      4: { cellWidth: 35, halign: 'center' },
+    },
+margin: { left: 14, right: 14 },
+      tableLineColor: [255, 255, 255],
+      tableLineWidth: 0,
+    });
+
+  y = doc.lastAutoTable.finalY + 10;
+
+  // Resumen de totales
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'bold');
+  doc.setTextColor(0, 0, 0);
+  const totalAmount = Number(invoice.total || 0);
+  const totalItems = 1;
+
+  const totalsData = [
+    ['Total items', totalItems.toString()],
+    ['Total Factura', formatMoney(totalAmount)],
+  ];
+
+  doc.autoTable({
+    startY: y,
+    body: totalsData,
+    theme: 'plain',
+    bodyStyles: {
+      fontSize: 9,
+      textColor: [0, 0, 0],
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 50 },
+      1: { cellWidth: 'auto', halign: 'right' },
+    },
+    margin: { left: 14, right: 14 },
+    tableLineColor: [255, 255, 255],
+    tableLineWidth: 0,
+  });
+
+  // Valor en letras - solo título en negrita
+  y = doc.lastAutoTable.finalY + 5;
+  doc.setFontSize(9);
+  doc.setFont(undefined, 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text('Valor en letras:', 14, y);
+  doc.setFont(undefined, 'normal');
+  const valorLetras = numberToWords(Math.round(totalAmount)).toUpperCase();
+  doc.text(valorLetras, doc.getTextWidth('Valor en letras:') + 18, y);
+  y += 10;
+
+  // Historial de pagos
+  if (invoicePayments.length > 0) {
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text('Historial de Pagos', 14, y);
+    y += 8;
+
+    const paymentData = invoicePayments.map((payment) => [
+      formatDate(payment.created_at),
+      payment.payment_type === 'TOTAL' ? 'Pago total' : 'Abono',
+      payment.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo',
+      formatMoney(payment.amount || 0),
+    ]);
+
+    doc.autoTable({
+      startY: y,
+      head: [['Fecha', 'Tipo', 'Método', 'Monto']],
+      body: paymentData,
+      theme: 'plain',
+      headStyles: {
+        fillColor: [240, 240, 240],
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        fontSize: 9,
+      },
+      bodyStyles: {
+        fontSize: 9,
+        textColor: [0, 0, 0],
+      },
+      columnStyles: {
+        0: { cellWidth: 35 },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 35, halign: 'right' },
+      },
+      margin: { left: 14, right: 14 },
+      tableLineColor: [200, 200, 200],
+      tableLineWidth: 0.1,
+    });
+
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  const fileName = `Factura_${companyName}_${invoice.invoice_number || invoiceId}_${new Date().toISOString().split('T')[0]}.pdf`;
+  doc.save(fileName);
+}
+
+async function downloadSingleInvoiceExcel(invoiceId) {
+  const { data: invoices, error } = await supabaseClient
+    .from('invoices')
+    .select('*')
+    .eq('id', invoiceId)
+    .single();
+
+  if (error || !invoices) {
+    alert('Error al cargar la factura: ' + (error?.message || 'No encontrada'));
+    return;
+  }
+
+  const [customers, suppliers, products, payments, saleRepresents, companyData] = await Promise.all([
+    supabaseClient.from('customers').select('*'),
+    supabaseClient.from('suppliers').select('*'),
+    supabaseClient.from('products').select('*'),
+    supabaseClient.from('invoice_payments').select('*').eq('invoice_id', invoiceId),
+    supabaseClient.from('sale_represent').select('*').limit(1),
+    supabaseClient.from('welders_industry').select('*').limit(1),
+  ]);
+
+  const customerMap = new Map((customers.data || []).map((c) => [c.id, c]));
+  const supplierMap = new Map((suppliers.data || []).map((s) => [s.id, s]));
+  const productMap = new Map((products.data || []).map((p) => [p.id, p]));
+  const saleRep = saleRepresents.data && saleRepresents.data[0] ? saleRepresents.data[0] : null;
+  const company = companyData.data && companyData.data[0] ? companyData.data[0] : null;
+
+  const invoice = invoices;
+  const product = productMap.get(invoice.product_id);
+  const measure = product?.measure || 'und';
+  const productName = product?.name || '';
+  const party = invoice.type === 'PURCHASE'
+    ? supplierMap.get(invoice.supplier_id)
+    : customerMap.get(invoice.customer_id);
+  const partyName = party?.name || (invoice.type === 'PURCHASE' ? 'Proveedor' : 'Cliente');
+  const paymentMethodLabel = invoice.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo';
+  const paymentTypeLabel = invoice.payment_type === 'ABONO' ? 'Abono' : 'Pago total';
+  const typeLabel = invoice.type === 'PURCHASE' ? 'Compra' : 'Venta';
+  const operationLabel = getInvoiceOperationLabel(invoice);
+  const invoicePayments = payments.data || [];
+
+  const wb = XLSX.utils.book_new();
+
+  // Hoja 1: Información General
+  const infoData = [
+    ['Campo', 'Valor'],
+    ['Empresa', 'Welders'],
+    ['Fecha', formatDate(invoice.created_at)],
+    ['Tipo', typeLabel],
+    ['Factura', invoice.invoice_number || 'N/A'],
+    ['Tipo de operación', operationLabel],
+    ['Remisión', invoice.operation_reference || '-'],
+    [invoice.type === 'PURCHASE' ? 'Proveedor' : 'Cliente', partyName],
+    ['Estado', invoice.status === 'PAID' ? 'Pagada' : 'Pendiente'],
+  ];
+
+  if (invoice.note) {
+    infoData.push(['Observación', invoice.note]);
+  }
+
+  const infoSheet = XLSX.utils.aoa_to_sheet(infoData);
+  infoSheet['!cols'] = [{ wch: 25 }, { wch: 40 }];
+
+  for (let j = 0; j < 2; j++) {
+    const cellRef = XLSX.utils.encode_cell({ r: 0, c: j });
+    if (infoSheet[cellRef]) {
+      infoSheet[cellRef].s = {
+        font: { bold: true },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        fill: { fgColor: { rgb: '1E40AF' } },
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+      };
+    }
+  }
+
+  XLSX.utils.book_append_sheet(wb, infoSheet, 'Información');
+
+  // Hoja 2: Detalle de Productos
+  const productData = [
+    ['Remisión', 'Producto', 'Cantidad', 'Precio Unit.', 'Total'],
+    [
+      invoice.operation_reference || '-',
+      productName,
+      `${invoice.quantity ?? 0} ${measure}`,
+      Number(invoice.unit_price || 0),
+      Number(invoice.total || 0),
+    ],
+  ];
+
+  const productSheet = XLSX.utils.aoa_to_sheet(productData);
+  productSheet['!cols'] = [
+    { wch: 20 },
+    { wch: 35 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 18 },
+  ];
+
+  for (let j = 0; j < 5; j++) {
+    const cellRef = XLSX.utils.encode_cell({ r: 0, c: j });
+    if (productSheet[cellRef]) {
+      productSheet[cellRef].s = {
+        font: { bold: true },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        fill: { fgColor: { rgb: '1E40AF' } },
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+      };
+    }
+  }
+
+  XLSX.utils.book_append_sheet(wb, productSheet, 'Productos');
+
+  // Hoja 3: Resumen de Totales
+  const totalPaid = Number(invoice.paid_amount || 0);
+  const balance = Number(invoice.balance || 0);
+
+  const totalsData = [
+    ['Concepto', 'Valor'],
+    ['Total Factura', Number(invoice.total || 0)],
+    ['Tipo de pago', paymentTypeLabel],
+    ['Método de pago', paymentMethodLabel],
+    ['Total Pagado', totalPaid],
+    ['Saldo Pendiente', balance],
+  ];
+
+  const totalsSheet = XLSX.utils.aoa_to_sheet(totalsData);
+  totalsSheet['!cols'] = [{ wch: 25 }, { wch: 30 }];
+
+  for (let j = 0; j < 2; j++) {
+    const cellRef = XLSX.utils.encode_cell({ r: 0, c: j });
+    if (totalsSheet[cellRef]) {
+      totalsSheet[cellRef].s = {
+        font: { bold: true },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        fill: { fgColor: { rgb: '1E40AF' } },
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+      };
+    }
+  }
+
+  XLSX.utils.book_append_sheet(wb, totalsSheet, 'Totales');
+
+  // Hoja 4: Historial de Pagos
+  if (invoicePayments.length > 0) {
+    const paymentData = [
+      ['Fecha', 'Tipo', 'Método', 'Monto'],
+      ...invoicePayments.map((payment) => [
+        formatDate(payment.created_at),
+        payment.payment_type === 'TOTAL' ? 'Pago total' : 'Abono',
+        payment.payment_method === 'TRANSFERENCIA' ? 'Transferencia' : 'Efectivo',
+        Number(payment.amount || 0),
+      ]),
+    ];
+
+    const paymentSheet = XLSX.utils.aoa_to_sheet(paymentData);
+    paymentSheet['!cols'] = [
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 18 },
+    ];
+
+    for (let j = 0; j < 4; j++) {
+      const cellRef = XLSX.utils.encode_cell({ r: 0, c: j });
+      if (paymentSheet[cellRef]) {
+        paymentSheet[cellRef].s = {
+          font: { bold: true },
+          alignment: { horizontal: 'center', vertical: 'center' },
+          fill: { fgColor: { rgb: '1E40AF' } },
+          font: { bold: true, color: { rgb: 'FFFFFF' } },
+        };
+      }
+    }
+
+    XLSX.utils.book_append_sheet(wb, paymentSheet, 'Pagos');
+  }
+
+  const fileName = `Factura_Welders_${invoice.invoice_number || invoiceId}_${new Date().toISOString().split('T')[0]}.xlsx`;
+  XLSX.writeFile(wb, fileName);
 }
 
 document.getElementById('invoiceHistoryBtn')?.addEventListener('click', () => openModuleHistory('invoice'));
 document.getElementById('downloadInvoiceExcelBtn')?.addEventListener('click', downloadInvoiceExcel);
+document.getElementById('downloadInvoicePdfBtn')?.addEventListener('click', downloadInvoicePdf);
 document.getElementById('closeModuleHistory')?.addEventListener('click', () => {
   const modal = document.getElementById('moduleHistoryModal');
   if (modal) modal.classList.add('hidden');
@@ -3695,6 +4767,12 @@ document.addEventListener('click', async (event) => {
       const payment = (await supabaseClient.from('invoice_payments').select('invoice_id').eq('id', id).single()).data;
       if (!payment) return;
       openPaymentModal(payment.invoice_id, 'total', id);
+    }
+    if (type === 'download-invoice-pdf') {
+      await downloadSingleInvoicePdf(id);
+    }
+    if (type === 'download-invoice-excel') {
+      await downloadSingleInvoiceExcel(id);
     }
     return;
   }
